@@ -1,0 +1,103 @@
+#pragma once
+#include "storage.hpp"
+#include "markdown.hpp"
+#include <commctrl.h>
+#include <functional>
+#include <map>
+#include <thread>
+
+namespace mq {
+inline constexpr wchar_t WindowClass[] = L"MemoQuick.Native.Window";
+inline constexpr UINT ShowMessage = WM_APP + 1;
+inline constexpr UINT TrayMessage = WM_APP + 2;
+inline constexpr UINT CompleteMessage = WM_APP + 3;
+enum ControlId : int {
+    Heading = 100, Subtitle, ServerLabel, ServerInput, UsernameLabel, UsernameInput,
+    PasswordLabel, PasswordInput, LoginButton, ResumeButton, Editor, Visibility,
+    SaveButton, AccountLabel, HotkeyHint, SettingsButton, NoticeLabel, PrivacyLabel,
+    HotkeyLabel, HotkeyInput, StartupInput, SettingsSaveButton, BackButton,
+    LogoutButton, BrowserButton, DraftHint, ThemeButton, CloseButton,
+    MdBold, MdItalic, MdHeading, MdLink, MdBullet, MdNumbered, MdTask, MdQuote, MdInlineCode, MdCodeBlock
+};
+enum class View { Login, Compose, Settings };
+enum class Action { Login, Resume, Save, Logout };
+struct Completion {
+    Action action;
+    std::unique_ptr<Client> client;
+    std::string error;
+    ErrorKind errorKind = ErrorKind::Http;
+    bool saved = false;
+};
+class Window {
+public:
+    Window(Store& store, bool smoke = false);
+    ~Window();
+    HWND create(HINSTANCE instance, bool background);
+    HWND handle() const { return handle_; }
+    void show();
+    void hide();
+    bool preprocess(MSG& message);
+    bool busy() const { return busy_; }
+    View view() const { return view_; }
+    std::string notice() const { return notice_; }
+    Draft currentDraft() const;
+    void smokeLogin(const std::string& server);
+    bool flushDraft();
+private:
+    static LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wparam, LPARAM lparam);
+    LRESULT message(UINT message, WPARAM wparam, LPARAM lparam);
+    void createControls();
+    void layout();
+    void fonts();
+    void applyTheme();
+    void toggleTheme();
+    void chooseVisibility();
+    void ensurePositionVisible();
+    void rememberPosition();
+    void markdown(MarkdownAction action);
+    void setView(View view);
+    void setBusy(bool busy);
+    void setNotice(const std::string& notice);
+    void enterCompose();
+    void login();
+    void save();
+    void logout();
+    void settingsSave();
+    void trayMenu();
+    void browser();
+    void launch(Action action, std::function<void(Completion&)> work);
+    void complete(std::unique_ptr<Completion> result);
+    void restore();
+    void quit();
+    bool registerHotkey(unsigned modifiers, unsigned key, bool alternate = false);
+    std::wstring text(int id) const;
+    void text(int id, const std::wstring& value);
+    HWND control(int id) const;
+    void place(int id, int x, int y, int width, int height);
+    Store& store_;
+    Config config_;
+    HWND handle_ = nullptr;
+    HINSTANCE instance_ = nullptr;
+    std::map<int, HWND> controls_;
+    std::unique_ptr<Client> client_;
+    User user_;
+    View view_ = View::Login;
+    View beforeSettings_ = View::Login;
+    std::jthread worker_;
+    bool busy_ = false;
+    bool draftDirty_ = false;
+    bool hotkeyRegistered_ = false;
+    bool settingEditor_ = false;
+    bool smoke_ = false;
+    bool positionReady_ = false;
+    bool startupChecked_ = false;
+    int visibility_ = 0;
+    int wheelDelta_ = 0;
+    unsigned dpi_ = 96;
+    HFONT font_ = nullptr, headingFont_ = nullptr, smallFont_ = nullptr;
+    HBRUSH background_ = nullptr, inputBackground_ = nullptr;
+    std::string notice_;
+    UINT taskbarCreated_ = 0;
+    int hotkeyId_ = 1;
+};
+} // namespace mq
