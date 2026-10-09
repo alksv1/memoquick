@@ -1,4 +1,5 @@
 #include "window.hpp"
+#include "theme.hpp"
 #include <shellapi.h>
 #include <dwmapi.h>
 #include <imm.h>
@@ -10,15 +11,7 @@ namespace mq {
 namespace {
 constexpr UINT_PTR DraftTimer = 1;
 constexpr UINT_PTR PositionTimer = 2;
-struct Palette {
-    COLORREF background, ink, muted, accent, hover, line, error;
-};
-Palette palette(bool dark) {
-    return dark ? Palette{RGB(29,31,35), RGB(229,231,235), RGB(151,158,169), RGB(54,111,86), RGB(43,46,52), RGB(58,62,69), RGB(246,174,133)}
-                : Palette{RGB(253,253,253), RGB(38,43,48), RGB(117,124,134), RGB(42,105,78), RGB(239,241,243), RGB(225,228,232), RGB(157,67,36)};
-}
 constexpr DWORD WindowStyle = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN;
-int scaled(int value, unsigned dpi) { return MulDiv(value, static_cast<int>(dpi), 96); }
 void trayIcon(HWND window, HINSTANCE instance, DWORD operation) {
     NOTIFYICONDATAW icon{};
     icon.cbSize = sizeof(icon); icon.hWnd = window; icon.uID = 1;
@@ -408,8 +401,7 @@ void Window::chooseVisibility() {
     const wchar_t* scopes[] = {L"仅自己", L"已登录用户", L"公开"};
     for (int i = 0; i < 3; ++i) AppendMenuW(menu, MF_STRING | (visibility_ == i ? MF_CHECKED : 0), static_cast<UINT_PTR>(i + 1), scopes[i]);
     RECT rect{}; GetWindowRect(control(Visibility), &rect);
-    const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top, 0, handle_, nullptr);
-    DestroyMenu(menu);
+    const auto command = trackMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top);
     if (command) {
         visibility_ = command - 1;
         text(Visibility, std::wstring(scopes[visibility_]) + L" ▾");
@@ -616,8 +608,7 @@ void Window::trayMenu() {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 4, L"退出 MemoQuick");
     POINT point{}; GetCursorPos(&point); SetForegroundWindow(handle_);
-    const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0, handle_, nullptr);
-    DestroyMenu(menu);
+    const auto command = trackMenu(menu, TPM_RIGHTBUTTON, point.x, point.y);
     if (command == 1) show();
     if (command == 2) browser();
     if (command == 3 && !busy_) {
@@ -809,8 +800,14 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         SetBkColor(dc, colors.background);
         return reinterpret_cast<LRESULT>(msg == WM_CTLCOLOREDIT ? inputBackground_ : background_);
     }
+    case WM_MEASUREITEM: {
+        const auto item = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+        if (item->CtlType == ODT_MENU && item->itemData) { measureMenu(*item); return TRUE; }
+        break;
+    }
     case WM_DRAWITEM: {
         const auto item = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
+        if (item->CtlType == ODT_MENU && item->itemData) { drawMenu(*item); return TRUE; }
         const auto dc = item->hDC;
         const auto colors = palette(config_.dark);
         const bool disabled = item->itemState & ODS_DISABLED;

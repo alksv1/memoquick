@@ -1,6 +1,6 @@
 # MemoQuick
 
-独立的 Memos 快速记录工具，当前版本 **0.2.0**。C++20 + Win32 原生窗口，直接连接已有 Memos 服务。
+独立的 Memos 快速记录工具，当前版本 **0.2.1**。C++20 + Win32 原生窗口，直接连接已有 Memos 服务。
 不依赖 Memospot、Electron、WebView、Node.js、Python 或 .NET 运行时。
 
 ## 使用

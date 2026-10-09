@@ -17,9 +17,9 @@ void requireFrameless(HWND window) {
         && client.right == outer.right - outer.left && client.bottom == outer.bottom - outer.top,
         "Native nonclient frame is still present");
 }
-void screenshot(HWND window, const std::filesystem::path& output, bool live = false) {
+void screenshot(HWND window, const std::filesystem::path& output, bool live = false, bool frameless = true) {
     if (!live) RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-    requireFrameless(window);
+    if (frameless) requireFrameless(window);
     RECT rect{}; GetWindowRect(window, &rect);
     const int width = rect.right - rect.left, height = rect.bottom - rect.top;
     const auto screen = GetWindowDC(window);
@@ -85,6 +85,87 @@ void verifyFocusFrame(HWND window, const std::filesystem::path& output) {
     DestroyWindow(other);
     SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
+struct MenuFixture {
+    HMENU menu = nullptr;
+    HWND popup = nullptr;
+    std::filesystem::path output;
+    bool dark = false;
+    bool confirm = false;
+    int target = -1;
+    int stage = 0;
+    int ticks = 0;
+    std::exception_ptr failure;
+};
+LRESULT CALLBACK menuFixtureProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) {
+    if (message == WM_INITMENUPOPUP) reinterpret_cast<MenuFixture*>(data)->menu = reinterpret_cast<HMENU>(wparam);
+    return DefSubclassProc(window, message, wparam, lparam);
+}
+void CALLBACK menuFixtureTick(HWND window, UINT, UINT_PTR timer, DWORD) {
+    auto& fixture = *reinterpret_cast<MenuFixture*>(GetPropW(window, L"MemoQuick.MenuFixture"));
+    try {
+        require(++fixture.ticks < 20, "Popup did not respond to keyboard");
+        if (!fixture.popup) {
+            EnumThreadWindows(GetCurrentThreadId(), [](HWND candidate, LPARAM data) -> BOOL {
+                wchar_t name[32]{}; GetClassNameW(candidate, name, 32);
+                if (std::wstring_view(name) == L"#32768" && IsWindowVisible(candidate)) {
+                    reinterpret_cast<MenuFixture*>(data)->popup = candidate; return FALSE;
+                }
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&fixture));
+        }
+        if (!fixture.popup || !fixture.menu) return;
+        if (fixture.stage == 0) {
+            // GIVEN a real tracked popup, WHEN shown in either theme, THEN its background follows the editor.
+            RECT bounds{}, item{}; GetWindowRect(fixture.popup, &bounds);
+            require(GetMenuItemRect(window, fixture.menu, 0, &item) != FALSE, "Cannot locate popup item");
+            wchar_t caption[128]{};
+            require(GetMenuStringW(fixture.menu, 0, caption, 128, MF_BYPOSITION) > 0, "Owner-drawn menu lost accessible text");
+            const auto dc = GetWindowDC(fixture.popup);
+            const auto pixel = GetPixel(dc, item.right - bounds.left - 2, (item.top + item.bottom) / 2 - bounds.top);
+            ReleaseDC(fixture.popup, dc);
+            screenshot(fixture.popup, fixture.output, true, false);
+            require(pixel == (fixture.dark ? RGB(29,31,35) : RGB(253,253,253)), "Popup background does not follow theme");
+            fixture.stage = 1;
+            PostMessageW(window, WM_KEYDOWN, VK_DOWN, 0);
+        } else {
+            MENUITEMINFOW info{sizeof(info)}; info.fMask = MIIM_STATE;
+            int selected = -1;
+            for (int i = 0; i < GetMenuItemCount(fixture.menu); ++i) {
+                require(GetMenuItemInfoW(fixture.menu, static_cast<UINT>(i), TRUE, &info) != FALSE, "Cannot inspect popup selection");
+                if (info.fState & MFS_HILITE) selected = i;
+            }
+            if (selected < 0 || (fixture.target >= 0 && selected != fixture.target)) {
+                PostMessageW(window, WM_KEYDOWN, VK_DOWN, 0); return;
+            }
+            RECT bounds{}, item{}; GetWindowRect(fixture.popup, &bounds);
+            require(GetMenuItemRect(window, fixture.menu, static_cast<UINT>(selected), &item) != FALSE, "Cannot locate selected item");
+            const auto dc = GetWindowDC(fixture.popup);
+            const auto pixel = GetPixel(dc, item.right - bounds.left - 8, (item.top + item.bottom) / 2 - bounds.top);
+            ReleaseDC(fixture.popup, dc);
+            require(pixel == (fixture.dark ? RGB(43,46,52) : RGB(239,241,243)), "Popup selection does not follow theme");
+            screenshot(fixture.popup, fixture.output.parent_path() / (fixture.output.stem().wstring() + L"-selected.bmp"), true, false);
+            fixture.stage = 2;
+            KillTimer(window, timer);
+            PostMessageW(window, WM_KEYDOWN, fixture.confirm ? VK_RETURN : VK_ESCAPE, 0);
+        }
+    } catch (...) {
+        fixture.failure = std::current_exception(); KillTimer(window, timer); EndMenu();
+    }
+}
+void verifyMenu(mq::Window& window, int button, bool dark, bool confirm, const std::filesystem::path& output, int target = -1) {
+    const auto before = window.currentDraft();
+    MenuFixture fixture{nullptr, nullptr, output, dark, confirm, target};
+    const auto handle = window.handle();
+    require(SetWindowSubclass(handle, menuFixtureProcedure, 891, reinterpret_cast<DWORD_PTR>(&fixture)) != FALSE, "Cannot attach menu fixture");
+    require(SetPropW(handle, L"MemoQuick.MenuFixture", &fixture) != FALSE, "Cannot configure menu fixture");
+    require(SetTimer(handle, 891, 100, menuFixtureTick) != 0, "Cannot start menu fixture");
+    if (button) SendMessageW(handle, WM_COMMAND, MAKEWPARAM(button, BN_CLICKED), 0);
+    else SendMessageW(handle, mq::TrayMessage, 0, WM_RBUTTONUP);
+    KillTimer(handle, 891); RemovePropW(handle, L"MemoQuick.MenuFixture"); RemoveWindowSubclass(handle, menuFixtureProcedure, 891);
+    if (fixture.failure) std::rethrow_exception(fixture.failure);
+    require(fixture.stage == 2, "Popup was not exercised");
+    require(window.currentDraft() == before, "Opening or cancelling menu changed draft");
+}
 class Smoke {
 public:
     Smoke(mq::Window& window, mq::Store& store, std::string server, std::filesystem::path output)
@@ -93,6 +174,7 @@ public:
         SetTimer(window_.handle(), 777, 30, nullptr);
         UpdateWindow(window_.handle());
         screenshot(window_.handle(), output_ / L"login.bmp");
+        verifyMenu(window_, 0, false, false, output_ / L"tray-menu-light.bmp");
         MONITORINFO monitor{sizeof(monitor)};
         require(GetMonitorInfoW(MonitorFromWindow(window_.handle(), MONITOR_DEFAULTTONEAREST), &monitor) != FALSE, "Monitor lookup failed");
         SetWindowPos(window_.handle(), nullptr, monitor.rcWork.left + 20, monitor.rcWork.top + 20, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -101,6 +183,7 @@ public:
         require(store_.windowPosition() == mq::WindowPosition{moved.left, moved.top}, "Drag end did not save position");
         SendMessageW(window_.handle(), WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
         screenshot(window_.handle(), output_ / L"login-dark.bmp");
+        verifyMenu(window_, 0, true, false, output_ / L"tray-menu-dark.bmp");
         SendMessageW(window_.handle(), WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
         window_.smokeLogin(server_);
     }
@@ -155,6 +238,8 @@ public:
             window_.flushDraft();
             UpdateWindow(handle);
             screenshot(handle, output_ / L"compose.bmp");
+            verifyMenu(window_, mq::AddButton, false, false, output_ / L"add-menu-light.bmp");
+            verifyMenu(window_, mq::Visibility, false, false, output_ / L"visibility-menu-light.bmp");
             verifyFocusFrame(handle, output_ / L"compose-inactive.bmp");
             draft_ = window_.currentDraft();
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
@@ -172,6 +257,11 @@ public:
             SetWindowTextW(editor, mq::wide(draft_.content).c_str());
             UpdateWindow(handle);
             screenshot(handle, output_ / L"compose-dark.bmp");
+            verifyMenu(window_, mq::AddButton, true, false, output_ / L"add-menu-dark.bmp");
+            verifyMenu(window_, mq::Visibility, true, true, output_ / L"visibility-menu-dark.bmp", 0);
+            verifyMenu(window_, mq::AddButton, true, true, output_ / L"add-menu-keyboard.bmp", 4);
+            require(window_.view() == mq::View::Location, "Enter did not execute the selected menu command");
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::BackButton, BN_CLICKED), 0);
             verifyFocusFrame(handle, output_ / L"compose-dark-inactive.bmp");
             RECT originalSize{}; GetWindowRect(handle, &originalSize);
             SetWindowPos(handle, nullptr, 0, 0, MulDiv(340, dpi, 96), MulDiv(416, dpi, 96),
@@ -278,8 +368,10 @@ public:
             SendMessageW(GetDlgItem(handle,mq::Editor),EM_UNDO,0,0);
             require(window_.currentDraft() == draft, "Image insertion redo changed attachment metadata");
             screenshot(handle,output_ / L"compose-rich.bmp");
+            verifyMenu(window_, mq::MetadataButton, false, false, output_ / L"metadata-menu-light.bmp");
             SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::ThemeButton,BN_CLICKED),0);
             screenshot(handle,output_ / L"compose-rich-dark.bmp");
+            verifyMenu(window_, mq::MetadataButton, true, false, output_ / L"metadata-menu-dark.bmp");
             stage_ = 9;
             SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::SaveButton,BN_CLICKED),0);
         } else if (stage_ == 9) {

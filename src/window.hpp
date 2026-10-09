@@ -59,6 +59,9 @@ private:
     void applyTheme();
     void toggleTheme();
     void chooseVisibility();
+    UINT trackMenu(HMENU menu, UINT flags, int x, int y);
+    void measureMenu(MEASUREITEMSTRUCT& measure);
+    void drawMenu(const DRAWITEMSTRUCT& draw);
     void ensurePositionVisible();
     void rememberPosition();
     void markdown(MarkdownAction action);

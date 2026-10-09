@@ -13,8 +13,7 @@ void Window::insertMenu() {
     AppendMenuW(menu, MF_STRING, InsertMemo, L"关联 Memo");
     AppendMenuW(menu, MF_STRING, InsertLocation, L"添加位置");
     RECT rect{}; GetWindowRect(control(AddButton), &rect);
-    const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top, 0, handle_, nullptr);
-    DestroyMenu(menu);
+    const auto command = trackMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top);
     if (command) SendMessageW(handle_, WM_COMMAND, MAKEWPARAM(command, BN_CLICKED), 0);
 }
 void Window::chooseFiles(bool image) {
@@ -116,8 +115,7 @@ void Window::metadataMenu() {
         AppendMenuW(menu, MF_STRING, 4000, L"移除位置");
     }
     RECT rect{}; GetWindowRect(control(MetadataButton), &rect);
-    const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top, 0, handle_, nullptr);
-    DestroyMenu(menu);
+    const auto command = trackMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top);
     if (command == RetryAttachments || command == InsertLocation) {
         SendMessageW(handle_, WM_COMMAND, MAKEWPARAM(command, BN_CLICKED), 0); return;
     }
