@@ -1,5 +1,6 @@
 #include "storage.hpp"
 #include "markdown.hpp"
+#include "audio.hpp"
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -42,6 +43,20 @@ void markdownTests() {
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
 }
 void unitTests() {
+    // GIVEN structured compose metadata, WHEN validated, THEN coordinates and resource boundaries are enforced.
+    check(mq::parseLocation(" 赤道 ","0","180") == mq::Location{"赤道",0,180}, "Location boundary parse failed");
+    rejects([] { mq::parseLocation("地点","nan","1"); }, mq::ErrorKind::Validation);
+    rejects([] { mq::parseLocation("地点","91","1"); }, mq::ErrorKind::Validation);
+    rejects([] { mq::parseLocation("地点","1x","1"); }, mq::ErrorKind::Validation);
+    rejects([] { mq::parseLocation(" ","1","1"); }, mq::ErrorKind::Validation);
+    check(!mq::validResource("attachments/../secret","attachments/"), "Attachment traversal accepted");
+    const mq::Attachment picture{"attachments/image-1","图[片].png","image/png"};
+    check(mq::imageMarkdown(mq::parseServer("https://example.com/notes/"),picture) == "![图\\[片\\].png](/notes/file/attachments/image-1/image)", "Image Markdown did not escape labels or retain proxy path");
+    const auto wave = mq::waveFile(std::string("\x01\x00\xff\x7f",4));
+    const std::string expectedHeader("RIFF\x28\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00" "data\x04\x00\x00\x00",44);
+    check(wave == expectedHeader + std::string("\x01\x00\xff\x7f",4), "PCM WAV serialization failed");
+    rejects([] { mq::waveFile(""); }, mq::ErrorKind::Validation);
+    rejects([] { mq::waveFile("x"); }, mq::ErrorKind::Validation);
     markdownTests();
     // GIVEN Unicode notes, WHEN converted both ways, THEN all characters survive.
     const std::string unicode = "你好 📝\r\n#想法";
@@ -110,6 +125,40 @@ void unitTests() {
         mq::Store store(directory);
         check(store.draft(server.url, "users/alice") == mq::Draft{} && store.cookies(server.url).empty(), "Private state deletion did not persist");
     }
+    // GIVEN an attachment-only draft, WHEN restarted, THEN encrypted bytes and all metadata survive within their account.
+    mq::Draft extended;
+    std::string cached;
+    {
+        mq::Store store(directory);
+        cached = store.cacheAttachment(server.url,"users/alice",wave);
+        extended.attachments = {{"","voice.wav","audio/wav",cached}};
+        extended.relations = {{"memos/reference-1","参考"}};
+        extended.location = mq::Location{"地点",22.3,114.2};
+        store.saveDraft(server.url,"users/alice",extended);
+        const auto stored = fileContents(directory / L"attachments" / (mq::wide(cached) + L".bin"));
+        check(stored.find("RIFF") == std::string::npos, "Audio cache was not encrypted");
+    }
+    {
+        mq::Store store(directory);
+        check(store.draft(server.url,"users/alice") == extended, "Attachment-only draft metadata did not survive restart");
+        check(store.attachmentBytes(server.url,"users/alice",cached) == wave, "Cached audio changed");
+        rejects([&] { store.attachmentBytes(server.url,"users/bob",cached); }, mq::ErrorKind::Storage);
+        rejects([&] { store.attachmentBytes("https://other.example/","users/alice",cached); }, mq::ErrorKind::Storage);
+        rejects([&] { store.attachmentBytes(server.url,"users/alice","../private"); }, mq::ErrorKind::Storage);
+        auto invalid = extended; invalid.attachments.push_back(extended.attachments.front());
+        check(!mq::validDraft(invalid), "Duplicate attachment accepted");
+        store.saveDraft(server.url,"users/alice",{}); store.removeAttachment(cached);
+        check(!std::filesystem::exists(directory / L"attachments" / (mq::wide(cached) + L".bin")), "Committed cache cleanup failed");
+    }
+    // GIVEN the 0.1 draft format, WHEN loaded by 0.2, THEN text and visibility remain intact.
+    {
+        const auto old = mq::protect("{\"sessions\":{},\"drafts\":{\"https://memos.example.com/\\nusers/alice\":{\"content\":\"legacy\",\"visibility\":\"PROTECTED\"}}}");
+        std::ofstream file(directory / L"private.bin",std::ios::binary); file.write(reinterpret_cast<const char*>(old.data()),static_cast<std::streamsize>(old.size()));
+    }
+    {
+        mq::Store store(directory);
+        check(store.draft(server.url,"users/alice") == mq::Draft{"legacy","PROTECTED"}, "Legacy draft migration lost content");
+    }
     // GIVEN old settings without a theme, WHEN upgraded, THEN Light is used and private data remains intact.
     { std::ofstream(directory / L"settings.json") << "{\"server\":\"https://memos.example.com/\"}"; }
     {
@@ -133,15 +182,28 @@ void apiTests(const std::string& url) {
     const auto server = mq::parseServer(url);
     std::vector<mq::Cookie> persisted;
     mq::Client client(server, {}, [&](const auto& cookies) { persisted = cookies; });
-    check(client.signIn("alice", "test-password") == mq::User{"users/alice", "Alice"}, "Sign-in failed");
+    check(client.signIn("alice", "test-password") == mq::User{"users/7", "Alice"}, "Sign-in failed");
     const mq::Draft draft{"你好 📝\r\n#测试\r\n- [ ] 待办", "PRIVATE"};
     check(client.createMemo(draft) == "memos/fixture", "Create after token refresh failed");
     mq::Client restarted(server, persisted);
-    check(restarted.resume() == mq::User{"users/alice", "Alice"}, "Session did not survive restart");
+    check(restarted.resume() == mq::User{"users/7", "Alice"}, "Session did not survive restart");
     rejects([&] { restarted.createMemo({"FAIL", "PRIVATE"}); }, mq::ErrorKind::Http);
     restarted.setTimeout(200);
     rejects([&] { restarted.createMemo({"TIMEOUT", "PRIVATE"}); }, mq::ErrorKind::Network);
     restarted.setTimeout(10000);
+    // GIVEN actual JSON endpoints, WHEN uploading and linking, THEN binary bytes, references and location reach the same memo mutation.
+    const std::string binary(2 * 1024 * 1024 + 17,'x');
+    auto image = restarted.uploadAttachment({"","图[片].png","image/png"},binary);
+    check(image.name == "attachments/fixture-1", "Image upload failed");
+    auto voice = restarted.uploadAttachment({"","voice.wav","audio/wav"},mq::waveFile(std::string(3200,'\0')));
+    check(voice.name == "attachments/fixture-2", "Audio upload failed");
+    rejects([&] { restarted.uploadAttachment({"","fail.bin","application/octet-stream"},"failure"); }, mq::ErrorKind::Http);
+    const auto page = restarted.listMemos("灵感\" &");
+    check(page.memos == std::vector<mq::MemoReference>{{"memos/reference-1","参考一"}} && page.nextPage == "next +/=", "Memo search leaked other users or archived notes");
+    check(restarted.listMemos("灵感\" &",page.nextPage).memos == std::vector<mq::MemoReference>{{"memos/reference-2","参考二"}}, "Memo pagination failed");
+    mq::Draft rich{"rich\n" + mq::imageMarkdown(server,image),"PRIVATE"};
+    rich.attachments = {image,voice}; rich.relations = page.memos; rich.location = mq::Location{"赤道",0,0};
+    check(restarted.createMemo(rich) == "memos/fixture", "Structured memo save failed");
     restarted.signOut();
     check(restarted.cookies().empty(), "Sign-out retained local cookies");
 }

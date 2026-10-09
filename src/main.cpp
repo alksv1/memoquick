@@ -129,7 +129,7 @@ public:
             SendMessageW(editor, EM_UNDO, 0, 0);
             require(window_.currentDraft() == original, "Link undo lost note content");
             require(window_.flushDraft(), "Draft persistence failed");
-            require(!store_.draft(mq::parseServer(server_).url, "users/alice").content.empty(), "Draft not persisted");
+            require(!store_.draft(mq::parseServer(server_).url, "users/7").content.empty(), "Draft not persisted");
             stage_ = 1;
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::SaveButton, BN_CLICKED), 0);
             require(!IsWindowEnabled(GetDlgItem(handle, mq::MdBold)), "Markdown toolbar stayed enabled while saving");
@@ -141,7 +141,7 @@ public:
         } else if (stage_ == 2) {
             require(!IsWindowVisible(handle), window_.notice().c_str());
             require(window_.currentDraft().content.empty(), "Successful write did not clear editor");
-            require(store_.draft(mq::parseServer(server_).url, "users/alice").content.empty(), "Successful write left a draft");
+            require(store_.draft(mq::parseServer(server_).url, "users/7").content.empty(), "Successful write left a draft");
             const auto start = std::chrono::steady_clock::now();
             SendMessageW(handle, WM_HOTKEY, 1, 0);
             latency_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -202,7 +202,7 @@ public:
             RECT beforeHide{}, afterShow{}; GetWindowRect(handle, &beforeHide);
             SendMessageW(handle, WM_HOTKEY, 1, 0);
             require(!IsWindowVisible(handle), "Second hotkey press did not hide window");
-            require(store_.draft(mq::parseServer(server_).url, "users/alice") == draft_, "Hotkey hide lost unsaved draft");
+            require(store_.draft(mq::parseServer(server_).url, "users/7") == draft_, "Hotkey hide lost unsaved draft");
             SendMessageW(handle, WM_HOTKEY, 1, 0);
             require(IsWindowVisible(handle) && window_.currentDraft() == draft_, "Hotkey reopen lost draft");
             requireFrameless(handle);
@@ -219,6 +219,74 @@ public:
                 << ",\n  \"show_handler_ms\": " << latency_ << "\n}\n";
             report.close();
             stage_ = 5;
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::InsertLocation,BN_CLICKED),0);
+        } else if (stage_ == 5) {
+            // GIVEN the native location panel, WHEN invalid and valid values are confirmed, THEN validation preserves the note.
+            require(window_.view() == mq::View::Location, "Location panel did not open");
+            SetWindowTextW(GetDlgItem(handle,mq::LocationName),L"书桌");
+            SetWindowTextW(GetDlgItem(handle,mq::LatitudeInput),L"nan");
+            SetWindowTextW(GetDlgItem(handle,mq::LongitudeInput),L"114.2");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::PanelConfirm,BN_CLICKED),0);
+            require(!window_.currentDraft().location && !window_.notice().empty(), "Invalid location was accepted");
+            SetWindowTextW(GetDlgItem(handle,mq::LatitudeInput),L"22.3");
+            screenshot(handle,output_ / L"location.bmp");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::PanelConfirm,BN_CLICKED),0);
+            require(window_.currentDraft().location == mq::Location{"书桌",22.3,114.2}, "Location confirmation lost coordinates");
+            require(window_.currentDraft().content == draft_.content, "Location panel changed editor content");
+            stage_ = 6;
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::InsertMemo,BN_CLICKED),0);
+        } else if (stage_ == 6) {
+            require(window_.view() == mq::View::Link, "Link panel did not open");
+            require(SendMessageW(GetDlgItem(handle,mq::MemoList),LB_GETCOUNT,0,0) == 1, "Link selector leaked other users or archived memos");
+            screenshot(handle,output_ / L"link-memo.bmp");
+            SendMessageW(GetDlgItem(handle,mq::MemoList),LB_SETCURSEL,0,0);
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::PanelConfirm,BN_CLICKED),0);
+            draft_ = window_.currentDraft();
+            require(draft_.relations == std::vector<mq::MemoReference>{{"memos/reference-1","参考一"}}, "Link selector did not create a reference");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::InsertAudio,BN_CLICKED),0);
+            require(window_.view() == mq::View::Record, "Audio panel did not open");
+            screenshot(handle,output_ / L"audio.bmp");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::BackButton,BN_CLICKED),0);
+            require(window_.currentDraft() == draft_, "Cancelling audio changed the draft");
+            // GIVEN cached attachments, WHEN the same account signs in again, THEN upload and inline insertion resume without the original files.
+            const auto url = mq::parseServer(server_).url;
+            const auto picture = store_.cacheAttachment(url,"users/7","fixture-image-bytes");
+            const auto voice = store_.cacheAttachment(url,"users/7",mq::waveFile(std::string(3200,'\0')));
+            draft_.attachments = {{"","小图.png","image/png",picture,true},{"","voice.wav","audio/wav",voice}};
+            store_.saveDraft(url,"users/7",draft_);
+            stage_ = 7; window_.smokeLogin(server_);
+        } else if (stage_ == 7) {
+            require(window_.currentDraft() == draft_, "Sign-in did not restore attachments and metadata");
+            stage_ = 8;
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::RetryAttachments,BN_CLICKED),0);
+        } else if (stage_ == 8) {
+            // GIVEN one confirmed upload and one failed upload, WHEN retrying, THEN only the pending file is uploaded.
+            const auto partial = window_.currentDraft();
+            require(!window_.notice().empty() && partial.attachments[0].name == "attachments/fixture-1"
+                && partial.attachments[1].name.empty(), "Partial upload failure did not preserve confirmed and pending attachments");
+            require(partial == store_.draft(mq::parseServer(server_).url,"users/7"), "Partial upload progress was not saved");
+            stage_ = 81;
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::RetryAttachments,BN_CLICKED),0);
+        } else if (stage_ == 81) {
+            const auto draft = window_.currentDraft();
+            require(draft.attachments.size() == 2 && draft.attachments[0].name == "attachments/fixture-1" && !draft.attachments[0].inlineImage,
+                window_.notice().c_str());
+            require(draft.content.find("![小图.png](/notes/file/attachments/fixture-1/image)") != std::string::npos, "Uploaded image was not inserted into Markdown");
+            require(draft == store_.draft(mq::parseServer(server_).url,"users/7"), "Upload metadata was not persisted");
+            SendMessageW(GetDlgItem(handle,mq::Editor),EM_UNDO,0,0);
+            require(window_.currentDraft().content == draft_.content, "Image insertion could not be undone");
+            SendMessageW(GetDlgItem(handle,mq::Editor),EM_UNDO,0,0);
+            require(window_.currentDraft() == draft, "Image insertion redo changed attachment metadata");
+            screenshot(handle,output_ / L"compose-rich.bmp");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::ThemeButton,BN_CLICKED),0);
+            screenshot(handle,output_ / L"compose-rich-dark.bmp");
+            stage_ = 9;
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::SaveButton,BN_CLICKED),0);
+        } else if (stage_ == 9) {
+            require(!IsWindowVisible(handle),window_.notice().c_str());
+            require(window_.currentDraft() == mq::Draft{}, "Saving did not clear all compose metadata");
+            require(store_.draft(mq::parseServer(server_).url,"users/7") == mq::Draft{}, "Saving left metadata in the stored draft");
+            stage_ = 10;
             KillTimer(handle, 777);
             DestroyWindow(handle);
             return true;

@@ -160,6 +160,14 @@ Draft Store::draft(const std::string& server, const std::string& user) const {
     try {
         const auto& value = drafts.at(key);
         Draft draft{value.at("content").get<std::string>(), value.value("visibility", "PRIVATE")};
+        for (const auto& a : value.value("attachments", Json::array()))
+            draft.attachments.push_back({a.value("name",""),a.at("filename").get<std::string>(),a.value("type","application/octet-stream"),a.value("localId",""),a.value("inlineImage",false)});
+        for (const auto& r : value.value("relations", Json::array()))
+            draft.relations.push_back({r.at("name").get<std::string>(),r.value("snippet","")});
+        if (value.contains("location") && !value.at("location").is_null()) {
+            const auto& l = value.at("location");
+            draft.location = Location{l.at("placeholder").get<std::string>(),l.at("latitude").get<double>(),l.at("longitude").get<double>()};
+        }
         if (!validDraft(draft)) throw Error("草稿内容无效，原文件已保留。", ErrorKind::Storage);
         return draft;
     } catch (const Json::exception&) { throw Error("草稿数据异常，原文件已保留。", ErrorKind::Storage); }
@@ -169,9 +177,42 @@ void Store::saveDraft(const std::string& server, const std::string& user, const 
     std::lock_guard lock(impl_->mutex);
     auto next = impl_->privateData;
     const auto key = keyFor(server, user);
-    if (draft.content.empty()) next["drafts"].erase(key);
-    else next["drafts"][key] = { {"content", draft.content}, {"visibility", draft.visibility} };
+    if (draft.content.empty() && draft.attachments.empty() && draft.relations.empty() && !draft.location) next["drafts"].erase(key);
+    else {
+        Json value{{"content",draft.content},{"visibility",draft.visibility},{"attachments",Json::array()},{"relations",Json::array()}};
+        for (const auto& a : draft.attachments)
+            value["attachments"].push_back({{"name",a.name},{"filename",a.filename},{"type",a.type},{"localId",a.localId},{"inlineImage",a.inlineImage}});
+        for (const auto& r : draft.relations) value["relations"].push_back({{"name",r.name},{"snippet",r.snippet}});
+        if (draft.location) value["location"] = {{"placeholder",draft.location->placeholder},{"latitude",draft.location->latitude},{"longitude",draft.location->longitude}};
+        next["drafts"][key] = std::move(value);
+    }
     impl_->savePrivate(next);
+}
+std::string Store::cacheAttachment(const std::string& server, const std::string& user, const std::string& bytes) {
+    if (bytes.empty() || bytes.size() > AttachmentSizeMax) throw Error("附件需非空且不超过 20 MiB。", ErrorKind::Validation);
+    GUID guid{};
+    if (FAILED(CoCreateGuid(&guid))) throw Error("无法创建附件缓存。", ErrorKind::Storage);
+    wchar_t buffer[40]{}; StringFromGUID2(guid, buffer, 40);
+    const auto id = utf8(std::wstring(buffer + 1, 36));
+    std::lock_guard lock(impl_->mutex);
+    std::filesystem::create_directories(impl_->directory / L"attachments");
+    atomicWrite(impl_->directory / L"attachments" / (wide(id) + L".bin"), protect(keyFor(server, user) + '\n' + bytes));
+    return id;
+}
+std::string Store::attachmentBytes(const std::string& server, const std::string& user, const std::string& id) const {
+    if (!validResource(id, "")) throw Error("附件缓存标识无效。", ErrorKind::Storage);
+    std::lock_guard lock(impl_->mutex);
+    const auto value = unprotect(readFile(impl_->directory / L"attachments" / (wide(id) + L".bin")));
+    const auto prefix = keyFor(server, user) + '\n';
+    if (!value.starts_with(prefix) || value.size() - prefix.size() > AttachmentSizeMax)
+        throw Error("附件缓存不属于当前账号，原文件已保留。", ErrorKind::Storage);
+    return value.substr(prefix.size());
+}
+void Store::removeAttachment(const std::string& id) {
+    if (!validResource(id, "")) return;
+    std::lock_guard lock(impl_->mutex);
+    std::error_code error;
+    std::filesystem::remove(impl_->directory / L"attachments" / (wide(id) + L".bin"), error);
 }
 void setStartup(bool enabled) {
     HKEY key = nullptr;

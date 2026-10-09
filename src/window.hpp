@@ -1,6 +1,7 @@
 #pragma once
 #include "storage.hpp"
 #include "markdown.hpp"
+#include "audio.hpp"
 #include <commctrl.h>
 #include <functional>
 #include <map>
@@ -17,16 +18,22 @@ enum ControlId : int {
     SaveButton, AccountLabel, HotkeyHint, SettingsButton, NoticeLabel, PrivacyLabel,
     HotkeyLabel, HotkeyInput, StartupInput, SettingsSaveButton, BackButton,
     LogoutButton, BrowserButton, DraftHint, ThemeButton, CloseButton,
-    MdBold, MdItalic, MdHeading, MdLink, MdBullet, MdNumbered, MdTask, MdQuote, MdInlineCode, MdCodeBlock
+    MdBold, MdItalic, MdHeading, MdLink, MdBullet, MdNumbered, MdTask, MdQuote, MdInlineCode, MdCodeBlock,
+    AddButton, MetadataButton, SearchInput, SearchButton, MemoList, MoreButton,
+    LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput,
+    PanelConfirm, RecordButton, RecordTime, PreviewButton,
+    InsertAttachment = 1000, InsertImage, InsertAudio, InsertMemo, InsertLocation, RetryAttachments
 };
-enum class View { Login, Compose, Settings };
-enum class Action { Login, Resume, Save, Logout };
+enum class View { Login, Compose, Settings, Link, Location, Record };
+enum class Action { Login, Resume, Save, Logout, Upload, Search };
 struct Completion {
     Action action;
     std::unique_ptr<Client> client;
     std::string error;
     ErrorKind errorKind = ErrorKind::Http;
     bool saved = false;
+    std::optional<Draft> draft;
+    MemoPage page;
 };
 class Window {
 public:
@@ -55,6 +62,18 @@ private:
     void ensurePositionVisible();
     void rememberPosition();
     void markdown(MarkdownAction action);
+    void insertMenu();
+    void chooseFiles(bool image);
+    void cacheAttachment(const std::string& filename, const std::string& type, const std::string& bytes, bool image);
+    void uploadPending(bool imagesOnly = false);
+    void prepareAttachments(Draft& draft, size_t cursor, bool imagesOnly = false);
+    void metadataMenu();
+    void updateMetadata();
+    void searchMemos(bool more = false);
+    void confirmPanel();
+    void record();
+    void finishRecording(bool attach);
+    void recordTick();
     void setView(View view);
     void setBusy(bool busy);
     void setNotice(const std::string& notice);
@@ -93,6 +112,11 @@ private:
     bool startupChecked_ = false;
     int visibility_ = 0;
     int wheelDelta_ = 0;
+    Draft extras_;
+    MemoPage memoPage_;
+    std::string memoSearch_;
+    AudioRecorder recorder_;
+    std::string recording_;
     unsigned dpi_ = 96;
     HFONT font_ = nullptr, headingFont_ = nullptr, smallFont_ = nullptr;
     HBRUSH background_ = nullptr, inputBackground_ = nullptr;

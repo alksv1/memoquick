@@ -4,6 +4,7 @@
 #include <imm.h>
 #include <windowsx.h>
 #include <algorithm>
+#include <charconv>
 
 namespace mq {
 namespace {
@@ -42,6 +43,7 @@ Window::Window(Store& store, bool smoke) : store_(store), config_(store.config()
 }
 Window::~Window() {
     if (worker_.joinable()) worker_.join();
+    PlaySoundW(nullptr, nullptr, 0);
     DeleteObject(font_); DeleteObject(headingFont_); DeleteObject(smallFont_);
     DeleteObject(background_); DeleteObject(inputBackground_);
 }
@@ -109,7 +111,10 @@ bool Window::flushDraft() {
         return true;
     } catch (const std::exception& error) { setNotice(error.what()); return false; }
 }
-void Window::hide() { if (flushDraft()) { rememberPosition(); ShowWindow(handle_, SW_HIDE); } }
+void Window::hide() {
+    if (view_ == View::Record && (recorder_.active() || !recording_.empty())) finishRecording(true);
+    if (flushDraft()) { rememberPosition(); ShowWindow(handle_, SW_HIDE); }
+}
 HWND Window::control(int id) const { const auto it = controls_.find(id); return it == controls_.end() ? nullptr : it->second; }
 std::wstring Window::text(int id) const {
     const auto input = control(id);
@@ -243,6 +248,24 @@ void Window::createControls() {
     add(SettingsSaveButton, L"BUTTON", L"完成", BS_OWNERDRAW | WS_TABSTOP);
     add(BackButton, L"BUTTON", L"返回", BS_OWNERDRAW | WS_TABSTOP);
     add(LogoutButton, L"BUTTON", L"退出登录", BS_OWNERDRAW | WS_TABSTOP);
+    add(AddButton, L"BUTTON", L"＋", BS_OWNERDRAW | WS_TABSTOP);
+    add(MetadataButton, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP);
+    add(SearchInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
+    add(SearchButton, L"BUTTON", L"搜索", BS_OWNERDRAW | WS_TABSTOP);
+    add(MemoList, L"LISTBOX", L"", LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE);
+    add(MoreButton, L"BUTTON", L"更多", BS_OWNERDRAW | WS_TABSTOP);
+    add(LocationLabel, L"STATIC", L"名称");
+    add(LocationName, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
+    add(LatitudeLabel, L"STATIC", L"纬度");
+    add(LatitudeInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
+    add(LongitudeLabel, L"STATIC", L"经度");
+    add(LongitudeInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
+    add(PanelConfirm, L"BUTTON", L"添加", BS_OWNERDRAW | WS_TABSTOP);
+    add(RecordButton, L"BUTTON", L"开始录音", BS_OWNERDRAW | WS_TABSTOP);
+    add(RecordTime, L"STATIC", L"00:00", SS_CENTER);
+    add(PreviewButton, L"BUTTON", L"试听", BS_OWNERDRAW | WS_TABSTOP);
+    for (const auto id : {SearchInput, LocationName}) SendMessageW(control(id), EM_SETLIMITTEXT, 250, 0);
+    for (const auto id : {LatitudeInput, LongitudeInput}) SendMessageW(control(id), EM_SETLIMITTEXT, 32, 0);
     const wchar_t* markdownIcons[] = {L"B", L"I", L"H", L"↗", L"•", L"1.", L"☐", L">", L"`", L"</>"};
     for (int id = MdBold; id <= MdCodeBlock; ++id)
         add(id, L"BUTTON", markdownIcons[id - MdBold], BS_OWNERDRAW | WS_TABSTOP);
@@ -250,6 +273,7 @@ void Window::createControls() {
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, handle_, nullptr, instance_, nullptr);
     for (const auto& [id, tip] : std::map<int, const wchar_t*>{{ThemeButton, L"切换 Light / Dark"},
             {SettingsButton, L"设置"}, {CloseButton, L"收起 · Esc"}, {SaveButton, L"保存 · Ctrl + Enter"},
+            {AddButton, L"添加附件、图片、录音、关联或位置"}, {MetadataButton, L"管理附件、关联与位置"},
             {MdBold, L"加粗 · Ctrl + B"}, {MdItalic, L"斜体 · Ctrl + I"}, {MdHeading, L"标题 · Ctrl + Shift + H"},
             {MdLink, L"链接 · Ctrl + K"}, {MdBullet, L"无序列表 · Ctrl + Shift + L"}, {MdNumbered, L"有序列表 · Ctrl + Shift + O"},
             {MdTask, L"待办 · Ctrl + Shift + T"}, {MdQuote, L"引用 · Ctrl + Shift + Q"},
@@ -292,8 +316,10 @@ void Window::layout() {
         RECT editRect{0, scaled(4, dpi_), scaled(contentWidth, dpi_), scaled(editorHeight - 4, dpi_)};
         SendMessageW(control(Editor), EM_SETRECT, 0, reinterpret_cast<LPARAM>(&editRect));
         place(Visibility, x - 4, height - 39, 100, 28);
+        place(AddButton, x + 96, height - 39, 28, 28);
+        place(MetadataButton, x + 128, height - 39, std::max(40, width - 224), 28);
         place(SaveButton, width - 80, height - 39, 68, 28);
-    } else {
+    } else if (view_ == View::Settings) {
         place(HotkeyLabel, x, 48, 72, 22);
         place(HotkeyInput, x + 82, 44, contentWidth - 82, 28);
         place(StartupInput, x, 84, 130, 28);
@@ -302,6 +328,24 @@ void Window::layout() {
         place(LogoutButton, x + 108, 158, 88, 28);
         place(BackButton, width - 160, height - 40, 64, 28);
         place(SettingsSaveButton, width - 88, height - 40, 76, 28);
+    } else {
+        place(BackButton, x - 4, height - 40, 60, 28);
+        place(PanelConfirm, width - 88, height - 40, 76, 28);
+        if (view_ == View::Link) {
+            place(SearchInput, x, 44, contentWidth - 68, 28);
+            place(SearchButton, width - 76, 44, 64, 28);
+            place(MemoList, x, 82, contentWidth, std::max(60, height - 130 - noticeHeight));
+            place(MoreButton, width - 158, height - 40, 60, 28);
+        } else if (view_ == View::Location) {
+            place(LocationLabel, x, 44, contentWidth, 20); place(LocationName, x, 68, contentWidth, 28);
+            const int field = (contentWidth - 12) / 2;
+            place(LatitudeLabel, x, 110, field, 20); place(LatitudeInput, x, 134, field, 28);
+            place(LongitudeLabel, x + field + 12, 110, field, 20); place(LongitudeInput, x + field + 12, 134, field, 28);
+        } else {
+            place(RecordTime, x, 76, contentWidth, 28);
+            place(RecordButton, width / 2 - 92, 126, 112, 28);
+            place(PreviewButton, width / 2 + 28, 126, 64, 28);
+        }
     }
     InvalidateRect(handle_, nullptr, TRUE);
 }
@@ -317,14 +361,16 @@ void Window::setView(View view) {
     const auto visible = [&](std::initializer_list<int> ids) { for (const auto id : ids) ShowWindow(control(id), SW_SHOW); };
     visible({Heading, ThemeButton, SettingsButton, CloseButton});
     if (!notice_.empty()) visible({NoticeLabel});
-    text(Heading, view == View::Settings ? L"设置" : L"MemoQuick");
+    text(Heading, view == View::Settings ? L"设置" : view == View::Link ? L"关联 Memo" : view == View::Location ? L"位置" : view == View::Record ? L"录音" : L"MemoQuick");
+    text(BackButton, view == View::Settings ? L"返回" : L"取消");
     if (view == View::Login) {
         visible({ServerLabel, ServerInput, UsernameLabel, UsernameInput, PasswordLabel, PasswordInput, LoginButton});
         if (!config_.server.empty()) visible({ResumeButton});
     } else if (view == View::Compose) {
-        visible({Editor, Visibility, SaveButton});
+        visible({Editor, Visibility, SaveButton, AddButton, MetadataButton});
+        updateMetadata();
         for (int id = MdBold; id <= MdCodeBlock; ++id) ShowWindow(control(id), SW_SHOW);
-    } else {
+    } else if (view == View::Settings) {
         visible({HotkeyLabel, HotkeyInput, StartupInput, SettingsSaveButton, BackButton, AccountLabel});
         if (!user_.name.empty() || !config_.server.empty()) visible({LogoutButton, BrowserButton});
         BYTE modifiers = 0;
@@ -334,6 +380,24 @@ void Window::setView(View view) {
         SendMessageW(control(HotkeyInput), HKM_SETHOTKEY, MAKEWORD(static_cast<BYTE>(config_.key), modifiers), 0);
         startupChecked_ = config_.startAtLogin;
         text(AccountLabel, wide(config_.server));
+    } else if (view == View::Link) {
+        visible({SearchInput, SearchButton, MemoList, MoreButton, BackButton, PanelConfirm});
+        EnableWindow(control(MoreButton), !memoPage_.nextPage.empty());
+    } else if (view == View::Location) {
+        visible({LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput, BackButton, PanelConfirm});
+        const auto coordinate = [](double value) {
+            char buffer[64]{};
+            const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+            return wide(std::string(buffer, result.ptr));
+        };
+        text(LocationName, extras_.location ? wide(extras_.location->placeholder) : L"");
+        text(LatitudeInput, extras_.location ? coordinate(extras_.location->latitude) : L"");
+        text(LongitudeInput, extras_.location ? coordinate(extras_.location->longitude) : L"");
+    } else if (view == View::Record) {
+        visible({RecordTime, RecordButton, PreviewButton, BackButton, PanelConfirm});
+        text(RecordButton, recording_.empty() ? L"开始录音" : L"重新录制");
+        text(RecordTime, recording_.empty() ? L"00:00" : L"已停止");
+        EnableWindow(control(PreviewButton), !recording_.empty());
     }
     layout();
     applyTheme();
@@ -360,6 +424,9 @@ void Window::setBusy(bool busy) {
         EnableWindow(control(id), !busy);
     }
     SendMessageW(control(Editor), EM_SETREADONLY, busy ? TRUE : FALSE, 0);
+    for (const auto id : {AddButton, MetadataButton, SearchInput, SearchButton, MemoList, PanelConfirm, RecordButton, PreviewButton}) EnableWindow(control(id), !busy);
+    EnableWindow(control(MoreButton), !busy && !memoPage_.nextPage.empty());
+    updateMetadata();
     text(LoginButton, busy ? L"连接中…" : L"登录");
     text(SaveButton, busy ? L"保存中…" : L"保存");
 }
@@ -371,23 +438,28 @@ void Window::setNotice(const std::string& notice) {
 }
 Draft Window::currentDraft() const {
     const auto index = visibility_;
-    return { utf8(text(Editor)), index == 1 ? "PROTECTED" : index == 2 ? "PUBLIC" : "PRIVATE" };
+    auto draft = extras_;
+    draft.content = utf8(text(Editor)); draft.visibility = index == 1 ? "PROTECTED" : index == 2 ? "PUBLIC" : "PRIVATE";
+    return draft;
 }
 void Window::enterCompose() {
     user_ = client_->user();
     const auto draft = store_.draft(config_.server, user_.name);
+    extras_ = draft;
     settingEditor_ = true;
     text(Editor, wide(draft.content));
     visibility_ = draft.visibility == "PROTECTED" ? 1 : draft.visibility == "PUBLIC" ? 2 : 0;
     text(Visibility, visibility_ == 1 ? L"已登录用户 ▾" : visibility_ == 2 ? L"公开 ▾" : L"仅自己 ▾");
     settingEditor_ = false;
     draftDirty_ = false;
+    updateMetadata();
     setView(View::Compose);
     SetFocus(control(Editor));
 }
 void Window::launch(Action action, std::function<void(Completion&)> work) {
     if (busy_) return;
     setNotice(""); setBusy(true);
+    if (action == Action::Upload) text(SaveButton, L"上传中…");
     if (worker_.joinable()) worker_.join();
     worker_ = std::jthread([this, action, work = std::move(work)] {
         auto result = std::make_unique<Completion>(); result->action = action;
@@ -403,13 +475,48 @@ void Window::complete(std::unique_ptr<Completion> result) {
     setBusy(false);
     if (result->client) { client_ = std::move(result->client); config_ = store_.config(); }
     try {
+        if (result->draft) {
+            extras_ = *result->draft;
+            const auto previous = text(Editor), next = wide(extras_.content);
+            if (previous != next) {
+                // Preserve the native edit control's undo record for uploaded images.
+                size_t start = 0, suffix = 0;
+                while (start < previous.size() && start < next.size() && previous[start] == next[start]) ++start;
+                while (suffix < previous.size() - start && suffix < next.size() - start
+                    && previous[previous.size() - suffix - 1] == next[next.size() - suffix - 1]) ++suffix;
+                const auto replacement = next.substr(start, next.size() - start - suffix);
+                settingEditor_ = true;
+                SendMessageW(control(Editor), EM_SETSEL, start, static_cast<LPARAM>(previous.size() - suffix));
+                SendMessageW(control(Editor), EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(replacement.c_str()));
+                settingEditor_ = false;
+            }
+            draftDirty_ = true; flushDraft(); updateMetadata();
+            if (result->action == Action::Upload && IsWindowVisible(handle_)) {
+                SendMessageW(control(Editor), EM_SETSEL, static_cast<WPARAM>(-1), -1);
+                SetFocus(control(Editor));
+            }
+        }
+        if (result->action == Action::Search && result->error.empty()) {
+            for (const auto& memo : result->page.memos) {
+                if (std::any_of(memoPage_.memos.begin(), memoPage_.memos.end(), [&](const auto& r) { return r.name == memo.name; })) continue;
+                if (std::any_of(extras_.relations.begin(), extras_.relations.end(), [&](const auto& r) { return r.name == memo.name; })) continue;
+                memoPage_.memos.push_back(memo);
+                auto label = wide(memo.snippet.empty() ? memo.name : memo.snippet);
+                std::replace(label.begin(), label.end(), L'\r', L' '); std::replace(label.begin(), label.end(), L'\n', L' ');
+                SendMessageW(control(MemoList), LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+            }
+            memoPage_.nextPage = result->page.nextPage;
+            EnableWindow(control(MoreButton), !memoPage_.nextPage.empty());
+            if (memoPage_.memos.empty()) setNotice("没有找到匹配的 Memo。");
+        }
         if (result->action == Action::Logout) {
-            client_.reset(); user_ = {}; draftDirty_ = false;
+            client_.reset(); user_ = {}; extras_ = {}; draftDirty_ = false;
             settingEditor_ = true; text(Editor, L""); settingEditor_ = false;
             setView(View::Login);
         } else if (result->error.empty() && (result->action == Action::Login || result->action == Action::Resume)) {
             enterCompose();
         } else if (result->action == Action::Save && result->saved) {
+            extras_ = {}; updateMetadata();
             settingEditor_ = true; text(Editor, L""); settingEditor_ = false;
             visibility_ = 0; text(Visibility, L"仅自己 ▾");
             draftDirty_ = false;
@@ -450,14 +557,18 @@ void Window::restore() {
 void Window::save() {
     if (busy_ || !client_ || user_.name.empty()) return;
     const auto draft = currentDraft();
-    if (!validDraft(draft) || trim(draft.content).empty()) { setNotice("先写点什么，再保存吧。"); return; }
+    if (!validDraft(draft) || (trim(draft.content).empty() && draft.attachments.empty())) { setNotice("写点什么，或添加一个附件。 "); return; }
     draftDirty_ = true;
     if (!flushDraft()) return;
     launch(Action::Save, [this, draft](Completion& result) {
-        client_->createMemo(draft);
+        result.draft = draft;
+        prepareAttachments(*result.draft, wide(draft.content).size());
+        client_->createMemo(*result.draft);
         result.saved = true;
         try { store_.saveDraft(client_->server().url, client_->user().name, {}); }
         catch (...) { throw Error("记录已保存，但旧草稿清理失败。请检查磁盘，不要重复提交旧草稿。", ErrorKind::Storage); }
+        for (const auto& a : result.draft->attachments) if (!a.localId.empty()) store_.removeAttachment(a.localId);
+        result.draft.reset();
     });
 }
 void Window::logout() {
@@ -509,11 +620,15 @@ void Window::trayMenu() {
     DestroyMenu(menu);
     if (command == 1) show();
     if (command == 2) browser();
-    if (command == 3 && !busy_) { beforeSettings_ = view_; setView(View::Settings); setNotice(""); show(); }
+    if (command == 3 && !busy_) {
+        if (view_ == View::Record && (recorder_.active() || !recording_.empty())) { finishRecording(true); show(); return; }
+        beforeSettings_ = view_; setView(View::Settings); setNotice(""); show();
+    }
     if (command == 4) quit();
     PostMessageW(handle_, WM_NULL, 0, 0);
 }
 void Window::quit() {
+    if (view_ == View::Record && (recorder_.active() || !recording_.empty())) finishRecording(true);
     if (busy_) { setNotice("正在处理请求，请完成后再退出。"); show(); return; }
     if (!flushDraft()) { show(); return; }
     rememberPosition();
@@ -544,6 +659,8 @@ bool Window::preprocess(MSG& msg) {
         if (msg.wParam == VK_RETURN && !busy_ && !imeComposing(GetFocus())) {
             if (view_ == View::Compose && (GetKeyState(VK_CONTROL) & 0x8000)) { save(); return true; }
             if (view_ == View::Login) { login(); return true; }
+            if (view_ == View::Link && msg.hwnd == control(SearchInput)) { searchMemos(); return true; }
+            if (view_ == View::Link && msg.hwnd == control(MemoList)) { confirmPanel(); return true; }
         }
     }
     return IsDialogMessageW(handle_, &msg) != FALSE;
@@ -617,6 +734,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
     }
     case WM_CLOSE: hide(); return 0;
     case WM_QUERYENDSESSION:
+        if (recorder_.active() || !recording_.empty()) return FALSE;
         // Avoid losing an in-flight write; Windows may still force termination.
         if (busy_ || !flushDraft()) return FALSE;
         rememberPosition(); return TRUE;
@@ -637,6 +755,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_TIMER:
         if (wparam == DraftTimer) flushDraft();
         if (wparam == PositionTimer) rememberPosition();
+        if (wparam == 3) recordTick();
         return 0;
     case WM_COMMAND: {
         const int id = LOWORD(wparam), event = HIWORD(wparam);
@@ -644,6 +763,18 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
             draftDirty_ = true; SetTimer(handle_, DraftTimer, 400, nullptr);
         }
         if (event != BN_CLICKED || busy_) return 0;
+        if (id == AddButton) insertMenu();
+        if (id == MetadataButton) metadataMenu();
+        if (id == InsertAttachment || id == InsertImage) chooseFiles(id == InsertImage);
+        if (id == RetryAttachments) uploadPending();
+        if (id == InsertMemo) { setNotice(""); text(SearchInput, L""); setView(View::Link); searchMemos(); }
+        if (id == InsertLocation) { setNotice(""); setView(View::Location); }
+        if (id == InsertAudio) { setNotice(""); setView(View::Record); }
+        if (id == SearchButton) searchMemos();
+        if (id == MoreButton) searchMemos(true);
+        if (id == PanelConfirm) confirmPanel();
+        if (id == RecordButton) record();
+        if (id == PreviewButton && !recording_.empty()) PlaySoundW(reinterpret_cast<LPCWSTR>(recording_.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
         if (id >= MdBold && id <= MdCodeBlock) markdown(static_cast<MarkdownAction>(id - MdBold));
         if (id == LoginButton) login();
         if (id == ResumeButton) restore();
@@ -654,18 +785,23 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (id == Visibility) chooseVisibility();
         if (id == StartupInput) { startupChecked_ = !startupChecked_; InvalidateRect(control(StartupInput), nullptr, TRUE); }
         if (id == SettingsButton) {
+            if (view_ == View::Record && (recorder_.active() || !recording_.empty())) { finishRecording(true); return 0; }
             setNotice("");
             if (view_ == View::Settings) setView(beforeSettings_);
             else { beforeSettings_ = view_; setView(View::Settings); }
         }
-        if (id == BackButton) { setNotice(""); setView(beforeSettings_); }
+        if (id == BackButton) {
+            if (view_ == View::Record) { PlaySoundW(nullptr, nullptr, 0); recorder_.cancel(); recording_.clear(); KillTimer(handle_,3); }
+            setNotice(""); setView(view_ == View::Settings ? beforeSettings_ : View::Compose);
+        }
         if (id == SettingsSaveButton) settingsSave();
         if (id == LogoutButton) logout();
         return 0;
     }
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN:
-    case WM_CTLCOLOREDIT: {
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
         const auto dc = reinterpret_cast<HDC>(wparam);
         const auto id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
         const auto colors = palette(config_.dark);
@@ -679,7 +815,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         const auto colors = palette(config_.dark);
         const bool disabled = item->itemState & ODS_DISABLED;
         const bool pressed = item->itemState & ODS_SELECTED;
-        const bool primary = item->CtlID == SaveButton || item->CtlID == LoginButton || item->CtlID == SettingsSaveButton;
+        const bool primary = item->CtlID == SaveButton || item->CtlID == LoginButton || item->CtlID == SettingsSaveButton || item->CtlID == PanelConfirm;
         const auto brush = CreateSolidBrush(primary ? (disabled ? colors.muted : colors.accent) : pressed ? colors.hover : colors.background);
         FillRect(dc, &item->rcItem, background_);
         const auto oldBrush = SelectObject(dc, brush); const auto oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
@@ -695,7 +831,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
             if (startupChecked_) DrawTextW(dc, L"✓", -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             rect.left += scaled(25, dpi_);
             DrawTextW(dc, caption.c_str(), -1, &rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        } else DrawTextW(dc, caption.c_str(), -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else DrawTextW(dc, caption.c_str(), -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         if (item->itemState & ODS_FOCUS) { InflateRect(&rect, -3, -3); DrawFocusRect(dc, &rect); }
         SelectObject(dc, oldFont); return TRUE;
     }

@@ -155,7 +155,7 @@ HttpResponse httpRequest(const Server& server, const std::wstring& path,
                          const std::string& method, const std::string& body,
                          const std::string& token, const std::string& cookies, int timeoutMs) {
     const bool creating = method == "POST" && path.ends_with(L"/memos");
-    Internet session(WinHttpOpen(L"MemoQuick/0.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0));
+    Internet session(WinHttpOpen(L"MemoQuick/0.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0));
     if (!session) networkError(creating);
     if (!WinHttpSetTimeouts(session.get(), timeoutMs, timeoutMs, timeoutMs, timeoutMs)) networkError(creating);
     Internet connection(WinHttpConnect(session.get(), server.host.c_str(), server.port, 0));
@@ -226,6 +226,8 @@ std::string Client::request(const std::string& path, const std::string& method, 
         if (response.status == 403) throw Error("服务拒绝了请求，请检查账号权限或是否允许密码登录。", ErrorKind::Http, 403);
         if (response.status == 429) throw Error("请求过于频繁，请稍后重试。", ErrorKind::Http, 429);
         if (response.status >= 300 && response.status < 400) throw Error("服务地址发生重定向，请填写跳转后的最终地址。", ErrorKind::Http, response.status);
+        if (response.status >= 500 && method == "POST" && path.ends_with("/memos"))
+            throw Error("服务未能确认保存结果，请先到 Memos 检查，再决定是否重试；草稿已保留。", ErrorKind::Http, response.status);
         throw Error("Memos 返回错误（" + std::to_string(response.status) + "）。请稍后检查；草稿已保留。", ErrorKind::Http, response.status);
     }
     return response.body.empty() ? "{}" : response.body;
@@ -278,14 +280,18 @@ User Client::currentUser() {
     return user_;
 }
 User Client::resume() { refresh(); return currentUser(); }
-bool validDraft(const Draft& draft) {
-    return draft.content.size() <= 2'000'000 && (draft.visibility == "PRIVATE" || draft.visibility == "PROTECTED" || draft.visibility == "PUBLIC");
-}
 std::string Client::createMemo(const Draft& draft) {
-    if (!validDraft(draft) || trim(draft.content).empty()) throw Error("请填写有效内容并选择可见范围。", ErrorKind::Validation);
+    if (!validDraft(draft) || (trim(draft.content).empty() && draft.attachments.empty())) throw Error("请填写内容或添加附件。", ErrorKind::Validation);
     discover();
     if (token_.empty()) refresh();
-    const Json body = { {"content", draft.content}, {"visibility", draft.visibility} };
+    Json body = { {"content", draft.content}, {"visibility", draft.visibility} };
+    for (const auto& attachment : draft.attachments) {
+        if (attachment.name.empty() || attachment.inlineImage) throw Error("请先完成附件上传。", ErrorKind::Validation);
+        body["attachments"].push_back({{"name",attachment.name}});
+    }
+    for (const auto& relation : draft.relations)
+        body["relations"].push_back({{"relatedMemo",{{"name",relation.name}}},{"type","REFERENCE"}});
+    if (draft.location) body["location"] = {{"placeholder",draft.location->placeholder},{"latitude",draft.location->latitude},{"longitude",draft.location->longitude}};
     std::string result;
     try { result = request(api_ + "/memos", "POST", body.dump(), true); }
     catch (const Error& error) {

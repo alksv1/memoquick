@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <optional>
 
 namespace mq {
 enum class ErrorKind { Validation, Network, Auth, Protocol, Storage, Http };
@@ -48,11 +49,39 @@ struct User {
     std::string displayName;
     bool operator==(const User&) const = default;
 };
+inline constexpr size_t AttachmentSizeMax = 20 * 1024 * 1024;
+struct Attachment {
+    std::string name, filename, type, localId;
+    bool inlineImage = false;
+    bool operator==(const Attachment&) const = default;
+};
+struct MemoReference {
+    std::string name, snippet;
+    bool operator==(const MemoReference&) const = default;
+};
+struct MemoPage {
+    std::vector<MemoReference> memos;
+    std::string nextPage;
+};
+struct Location {
+    std::string placeholder;
+    double latitude = 0, longitude = 0;
+    bool operator==(const Location&) const = default;
+};
 struct Draft {
     std::string content;
     std::string visibility = "PRIVATE";
+    std::vector<Attachment> attachments;
+    std::vector<MemoReference> relations;
+    std::optional<Location> location;
     bool operator==(const Draft&) const = default;
 };
+bool validResource(const std::string& name, const std::string& prefix);
+bool validLocation(const Location& location);
+std::string encodeUrl(const std::string& value);
+std::string imageMarkdown(const Server& server, const Attachment& attachment);
+std::string fileMime(const std::filesystem::path& path);
+Location parseLocation(const std::string& label, const std::string& latitude, const std::string& longitude);
 struct Config {
     std::string server;
     unsigned modifiers = MOD_CONTROL | MOD_ALT;
@@ -79,6 +108,8 @@ public:
     User signIn(const std::string& username, const std::string& password);
     User resume();
     std::string createMemo(const Draft& draft);
+    Attachment uploadAttachment(const Attachment& attachment, const std::string& bytes);
+    MemoPage listMemos(const std::string& search, const std::string& page = {});
     void signOut();
     const Server& server() const { return server_; }
     const User& user() const { return user_; }
@@ -88,12 +119,14 @@ private:
     std::string request(const std::string& path, const std::string& method = "GET",
                         const std::string& body = {}, bool authenticated = false);
     void refresh();
+    std::string authenticated(const std::string& path, const std::string& method = "GET", const std::string& body = {});
     User currentUser();
     Server server_;
     CookieJar jar_;
     User user_;
     std::string token_;
     std::string api_;
+    int creatorFilter_ = 0;
     int timeoutMs_ = 10000;
     std::function<void(const std::vector<Cookie>&)> persist_;
 };

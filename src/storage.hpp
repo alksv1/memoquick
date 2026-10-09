@@ -22,6 +22,9 @@ public:
     void saveCookies(const std::string& server, const std::vector<Cookie>& cookies);
     Draft draft(const std::string& server, const std::string& user) const;
     void saveDraft(const std::string& server, const std::string& user, const Draft& draft);
+    std::string cacheAttachment(const std::string& server, const std::string& user, const std::string& bytes);
+    std::string attachmentBytes(const std::string& server, const std::string& user, const std::string& id) const;
+    void removeAttachment(const std::string& id);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
