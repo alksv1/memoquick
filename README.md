@@ -5,7 +5,7 @@
 
 ## 使用
 
-1. 从源码构建后，双击 `dist/MemoQuick.exe`。
+1. 从 [Releases](https://github.com/alksv1/memoquick/releases) 下载 Windows x64 的 EXE，或解压便携 ZIP 后运行 `MemoQuick.exe`。
 2. 填写 Memos 服务地址、用户名和密码，登录一次。
 3. 在任意应用按 **Ctrl + Alt + M** 呼出小窗，直接输入内容。
    再按一次相同快捷键收起小窗，未提交的草稿会保留；最小化时按快捷键恢复窗口。
@@ -110,6 +110,17 @@ ctest --test-dir build -C Release --output-on-failure
 成品静态链接 MSVC C++ 运行库，可单独分发一个 `MemoQuick.exe`。
 源码附带固定版本 nlohmann/json 单头文件，构建不需要联网下载依赖。
 测试中的真实 HTTP 接口和窗口验证使用 Python 3.9+ 标准库；Python 不参与程序运行。
+
+## 自动发布
+
+[Release Windows](https://github.com/alksv1/memoquick/actions/workflows/release.yml) 在推送 `v0.2.2` 这样的版本标签后自动编译并发布。
+标签必须对应已有提交，并与 `CMakeLists.txt` 和程序资源中的版本一致；带 `-rc.1` 等后缀的标签发布为预发行版。
+也可在 Actions 页面选择 **Run workflow**，填写已有标签，为旧版本补发 Release，无需移动标签。
+
+工作流使用 Windows x64 / MSVC Release 构建，核心与新旧 API 测试通过后生成 EXE、包含许可证的便携 ZIP 和 `SHA256SUMS.txt`。
+先上传到 Release 草稿，全部成功后公开发布；失败可重跑，已公开的 Release 保留原有文件。
+仅使用仓库自动提供的 `GITHUB_TOKEN`，无需配置额外密钥。
+云端运行核心和真实本机 HTTP 接口测试，截图、焦点及窗口交互测试需在有交互桌面的 Windows 上运行完整测试。
 
 ## 验证
 

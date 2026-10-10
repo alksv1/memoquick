@@ -1,0 +1,166 @@
+name: Release Windows
+run-name: Release ${{ inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, such as v0.2.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      PYTHONUTF8: '1'
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      commit: ${{ steps.package.outputs.commit }}
+    steps:
+      - name: Validate version tag
+        id: version
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
+            throw 'Expected an existing vMAJOR.MINOR.PATCH tag, optionally with a prerelease suffix.'
+          }
+          "tag=$env:RELEASE_TAG" >> $env:GITHUB_OUTPUT
+          "prerelease=$($env:RELEASE_TAG.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Check out the exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.version.outputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Python for API tests
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Check source version and configure x64
+        run: |
+          $source = Get-Content CMakeLists.txt -Raw
+          if ($source -notmatch 'project\(MemoQuick VERSION ([0-9]+\.[0-9]+\.[0-9]+)\b') {
+            throw 'Cannot read the application version from CMakeLists.txt.'
+          }
+          if (($env:RELEASE_TAG.Substring(1) -split '-', 2)[0] -cne $Matches[1]) {
+            throw 'The release tag and application version do not match.'
+          }
+          cmake -S . -B build -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
+
+      - name: Build Release
+        run: |
+          cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { throw 'Compilation failed.' }
+
+      - name: Run core and API tests
+        run: |
+          ctest --test-dir build -C Release -R '^core$' --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
+          # Native screenshot/focus tests require an interactive desktop. Run both
+          # existing real HTTP fixtures here without starting their desktop branch.
+          @'
+          import runpy
+          fixture = runpy.run_path('tests/integration.py')['run_fixture']
+          for prefix in ('api/v1', 'api'):
+              fixture(prefix, False, 'build/Release/memoquick_tests.exe')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'API integration tests failed.' }
+
+      - name: Package executable, licenses and checksums
+        id: package
+        run: |
+          $binary = Get-Item build/Release/MemoQuick.exe
+          $version = ($env:RELEASE_TAG.Substring(1) -split '-', 2)[0]
+          if ($binary.VersionInfo.ProductVersion -cne $version) {
+            throw 'The executable resource version and release tag do not match.'
+          }
+          $name = "MemoQuick-$env:RELEASE_TAG-windows-x64"
+          New-Item -ItemType Directory -Path release, package/third_party -Force | Out-Null
+          Copy-Item -LiteralPath $binary.FullName -Destination "release/$name.exe"
+          Copy-Item -LiteralPath $binary.FullName -Destination package/MemoQuick.exe
+          Copy-Item -LiteralPath LICENSE, THIRD_PARTY.md -Destination package
+          Copy-Item -LiteralPath third_party/LICENSE-json.txt -Destination package/third_party
+          Compress-Archive -Path package/* -DestinationPath "release/$name.zip"
+          $checksums = Get-FileHash -Algorithm SHA256 -LiteralPath "release/$name.exe", "release/$name.zip" |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path -Leaf $_.Path)" }
+          $checksums | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot determine the source commit.' }
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+          $notes = "Windows 10 / 11 x64. Download the EXE directly or extract the portable ZIP.`n`nSource commit: $commit`n`n"
+          $notes += Get-Content RELEASE_NOTES.md -Raw
+          $notes | Set-Content -LiteralPath release/release-notes.md -Encoding utf8
+
+      - name: Keep build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-x64-release
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-x64-release
+          path: release
+
+      - name: Publish GitHub Release
+        shell: bash
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS.txt
+          actual_commit="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha')"
+          if [[ "$actual_commit" != "$SOURCE_COMMIT" ]]; then
+            echo 'The version tag moved after checkout. Refusing to publish.' >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > draft.txt; then
+            if [[ "$(cat draft.txt)" != 'true' ]]; then
+              echo 'This release is already published. Existing assets are preserved.'
+              echo "Release already published: https://github.com/$GH_REPO/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          else
+            flags=()
+            if [[ "$PRERELEASE" == 'true' ]]; then flags+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "MemoQuick $RELEASE_TAG" --notes-file release-notes.md "${flags[@]}"
+          fi
+          # Only replace assets on a draft. Publish after every upload succeeds.
+          gh release upload "$RELEASE_TAG" ./*.exe ./*.zip SHA256SUMS.txt --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
+          echo "Published: https://github.com/$GH_REPO/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
