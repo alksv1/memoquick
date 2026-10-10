@@ -214,19 +214,27 @@ void Store::removeAttachment(const std::string& id) {
     std::error_code error;
     std::filesystem::remove(impl_->directory / L"attachments" / (wide(id) + L".bin"), error);
 }
-void setStartup(bool enabled) {
-    HKEY key = nullptr;
-    const auto status = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-        0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
-    if (status != ERROR_SUCCESS) throw Error("无法更新开机启动设置。", ErrorKind::Storage);
-    LSTATUS result;
+void setStartup(bool enabled, const std::wstring& registryPath) {
+    std::wstring command;
     if (enabled) {
         std::wstring executable(32768, L'\0');
         const auto length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
-        if (!length || length == executable.size()) { RegCloseKey(key); throw Error("无法确定程序路径。", ErrorKind::Storage); }
+        if (!length || length == executable.size()) throw Error("无法确定程序路径。", ErrorKind::Storage);
         executable.resize(length);
-        const auto command = L"\"" + executable + L"\" --background";
-        result = RegSetValueExW(key, L"MemoQuick", 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+        command = L"\"" + executable + L"\" --background";
+        if (command.size() > 260) throw Error("程序路径过长，无法设置开机启动。请移到较短的固定目录后重试。", ErrorKind::Storage);
+    }
+    HKEY key = nullptr;
+    const auto status = RegCreateKeyExW(HKEY_CURRENT_USER, registryPath.c_str(),
+        0, nullptr, 0, KEY_SET_VALUE | KEY_QUERY_VALUE, nullptr, &key, nullptr);
+    if (status != ERROR_SUCCESS) throw Error("无法更新开机启动设置。", ErrorKind::Storage);
+    LSTATUS result;
+    if (enabled) {
+        std::wstring current(command.size() + 1, L'\0');
+        DWORD bytes = static_cast<DWORD>(current.size() * sizeof(wchar_t));
+        const auto query = RegGetValueW(key, nullptr, L"MemoQuick", RRF_RT_REG_SZ, nullptr, current.data(), &bytes);
+        if (query == ERROR_SUCCESS && std::wstring(current.c_str()) == command) result = ERROR_SUCCESS;
+        else result = RegSetValueExW(key, L"MemoQuick", 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
     } else {
         result = RegDeleteValueW(key, L"MemoQuick");
         if (result == ERROR_FILE_NOT_FOUND) result = ERROR_SUCCESS;

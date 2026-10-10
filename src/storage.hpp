@@ -29,5 +29,5 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
-void setStartup(bool enabled);
+void setStartup(bool enabled, const std::wstring& registryPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 } // namespace mq

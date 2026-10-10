@@ -403,13 +403,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     int count = 0;
     auto arguments = CommandLineToArgvW(GetCommandLineW(), &count);
-    bool background = false, smoke = false, checkPosition = false;
+    bool background = false, smoke = false, checkPosition = false, checkSession = false;
     std::string server;
     std::filesystem::path data, output;
     for (int i = 1; i < count; ++i) {
         const std::wstring argument = arguments[i];
         if (argument == L"--background") background = true;
         if (argument == L"--check-position") checkPosition = true;
+        if (argument == L"--check-session") { checkSession = true; background = true; }
         if (argument == L"--smoke" && i + 1 < count) { smoke = true; server = mq::utf8(arguments[++i]); }
         if (argument == L"--data-dir" && i + 1 < count) data = arguments[++i];
         if (argument == L"--output" && i + 1 < count) output = arguments[++i];
@@ -418,8 +419,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HANDLE mutex = nullptr;
     int result = 0;
     try {
-        if ((smoke || checkPosition) && (data.empty() || output.empty())) throw std::runtime_error("Desktop tests require isolated data and output directories.");
-        if (!smoke && !checkPosition) {
+        if ((smoke || checkPosition || checkSession) && (data.empty() || output.empty())) throw std::runtime_error("Desktop tests require isolated data and output directories.");
+        if (!smoke && !checkPosition && !checkSession) {
             mutex = CreateMutexW(nullptr, FALSE, L"Local\\MemoQuick.Native.SingleInstance");
             if (!mutex) throw std::runtime_error("Cannot acquire application mutex");
             if (GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -434,8 +435,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             }
         }
         mq::Store store(data.empty() ? mq::dataDirectory() : data);
-        mq::Window window(store, smoke || checkPosition);
+        mq::Window window(store, smoke || checkPosition || checkSession);
         window.create(instance, background);
+        if (checkSession) { window.smokeResume(); SetTimer(window.handle(), 778, 100, nullptr); }
         if (checkPosition) {
             RECT bounds{}; GetWindowRect(window.handle(), &bounds);
             MONITORINFO monitor{sizeof(monitor)};
@@ -453,7 +455,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         const auto deadline = GetTickCount64() + 60000;
         MSG message{};
         while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-            if (smoke && GetTickCount64() > deadline) throw std::runtime_error("Desktop test timed out");
+            if ((smoke || checkSession) && GetTickCount64() > deadline) throw std::runtime_error("Desktop test timed out");
+            if (checkSession && message.message == WM_TIMER && message.wParam == 778) {
+                require(!IsWindowVisible(window.handle()), "Background session recovery opened a window");
+                if (!window.busy() && window.view() == mq::View::Compose) {
+                    require(window.currentDraft() == store.draft(store.config().server, "users/7"), "Restart did not restore the encrypted draft");
+                    std::ofstream(output / L"session-restored.txt") << "Session and encrypted draft restored in background.\n";
+                    DestroyWindow(window.handle());
+                }
+                continue;
+            }
             if (smoke && message.message == WM_TIMER && message.wParam == 777) { test->tick(); continue; }
             try {
                 if (!window.preprocess(message)) { TranslateMessage(&message); DispatchMessageW(&message); }
@@ -463,7 +474,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
     } catch (const std::exception& error) {
         result = 1;
-        if (smoke || checkPosition) {
+        if (smoke || checkPosition || checkSession) {
             std::filesystem::create_directories(output);
             std::ofstream(output / L"failure.txt") << error.what();
         } else MessageBoxW(nullptr, mq::wide(error.what()).c_str(), L"MemoQuick 无法启动", MB_OK | MB_ICONERROR);

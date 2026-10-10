@@ -12,11 +12,15 @@ from urllib.parse import urlsplit, parse_qs
 
 
 class Fixture(ThreadingHTTPServer):
-    def __init__(self, prefix, desktop=False):
+    def __init__(self, prefix, desktop=False, connect=False):
         super().__init__(("127.0.0.1", 0), Handler)
         self.prefix = prefix
         self.desktop = desktop
+        self.connect = connect
         self.refreshes = 0
+        self.recovery_failures = 0
+        self.profile_failures = 0
+        self.suppress_cookie = False
         self.creates = []
         self.cookie = ""
         self.token = ""
@@ -37,7 +41,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
-        if cookie:
+        if cookie and not self.server.suppress_cookie:
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
         try:
@@ -49,7 +53,19 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         path = parsed.path.removeprefix("/notes/")
         query = parse_qs(parsed.query)
-        if path == self.server.prefix + "/instance/profile":
+        if path == "cookie-headers":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "2")
+            self.send_header("Set-Cookie", "memos_refresh=header-probe; Path=/; HttpOnly; Expires=Wed, 01 Jan 2098 00:00:00 GMT")
+            self.send_header("Set-Cookie", "auxiliary=second; Path=/; Max-Age=86400")
+            self.end_headers()
+            self.wfile.write(b"{}")
+        elif path == self.server.prefix + "/instance/profile":
+            if self.server.profile_failures:
+                self.server.profile_failures -= 1
+                self.send_json(503, {})
+                return
             self.send_json(200, {"version": "0.26.1" if self.server.prefix == "api/v1" else "0.32.0"})
         elif path == self.server.prefix + "/auth/me":
             if self.headers.get("Authorization") != "Bearer " + self.server.token:
@@ -88,13 +104,33 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.removeprefix("/notes/")
         data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
         assert self.headers.get("Origin") == self.server.base.removesuffix("/notes/"), "Origin header missing"
+        if path.startswith("memos.api.v1."):
+            if not self.server.connect:
+                self.send_json(404, {})
+                return
+            assert self.headers.get("Connect-Protocol-Version") == "1"
+            if path == "memos.api.v1.InstanceService/GetInstanceProfile":
+                self.send_json(200, {"version": "0.31.0"})
+                return
+            procedures = {"SignIn":"signin", "RefreshToken":"refresh", "GetCurrentUser":"me", "SignOut":"signout"}
+            path = self.server.prefix + "/auth/" + procedures[path.rsplit("/", 1)[1]]
+        elif self.server.connect and "/auth/" in path:
+            raise AssertionError("Authentication used the REST gateway instead of Connect")
+        if path == self.server.prefix + "/auth/me":
+            assert self.headers.get("Authorization") == "Bearer " + self.server.token
+            self.send_json(200, {"user": {"name":"users/7", "displayName":"Alice"}})
+            return
         if path == self.server.prefix + "/auth/signin":
             assert data == {"passwordCredentials": {"username": "alice", "password": "test-password"}}, "Credentials have wrong shape"
             self.server.token = "token-0"
             self.server.cookie = "refresh-0"
-            self.send_json(200, {"accessToken": self.server.token}, "memos_refresh=refresh-0; Path=/notes/; HttpOnly; Max-Age=86400")
+            self.send_json(200, {"accessToken": self.server.token}, "memos_refresh=refresh-0; Path=/notes/; HttpOnly; Expires=Wed, 01 Jan 2098 00:00:00 GMT")
         elif path == self.server.prefix + "/auth/refresh":
             assert self.headers.get("Cookie") == "memos_refresh=" + self.server.cookie, "Refresh cookie missing or not rotated"
+            if self.server.recovery_failures:
+                self.server.recovery_failures -= 1
+                self.send_json(503, {})
+                return
             self.server.refreshes += 1
             self.server.token = f"token-{self.server.refreshes}"
             self.server.cookie = f"refresh-{self.server.refreshes}"
@@ -178,8 +214,8 @@ class Handler(BaseHTTPRequestHandler):
         return {"name":f"attachments/fixture-{len(self.server.files)}","filename":metadata["filename"],"type":metadata["type"],"externalLink":"https://storage.invalid/private"}
 
 
-def run_fixture(prefix, desktop, executable):
-    server = Fixture(prefix, desktop)
+def run_fixture(prefix, desktop, executable, connect=False):
+    server = Fixture(prefix, desktop, connect)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -220,7 +256,44 @@ def run_fixture(prefix, desktop, executable):
         server.server_close()
 
 
+def run_session_recovery(executable, application):
+    # GIVEN DPAPI state from an exited process, WHEN background startup encounters
+    # temporary service failures, THEN it retries and restores without opening UI.
+    server = Fixture("api/v1", connect=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # GIVEN a successful token response without a refresh cookie, WHEN signing
+        # in, THEN reject the non-restorable session rather than reporting success.
+        server.suppress_cookie = True
+        with tempfile.TemporaryDirectory(prefix="memoquick-no-cookie-") as data:
+            result = subprocess.run([executable, "--session-seed", server.base, data], capture_output=True, timeout=30)
+            assert result.returncode == 1, "Sign-in silently accepted a missing refresh cookie"
+            assert not (pathlib.Path(data) / "private.bin").exists(), "Missing refresh cookie created a session"
+        server.suppress_cookie = False
+        with tempfile.TemporaryDirectory(prefix="memoquick-session-") as data:
+            subprocess.run([executable, "--session-seed", server.base, data], check=True, timeout=30)
+            encrypted = (pathlib.Path(data) / "private.bin").read_bytes()
+            assert b"refresh-0" not in encrypted and b"test-password" not in encrypted
+            server.profile_failures = 1
+            server.recovery_failures = 1
+            report = pathlib.Path(data) / "session-restored.txt"
+            for _ in range(2):
+                report.unlink(missing_ok=True)
+                subprocess.run([application, "--check-session", "--data-dir", data, "--output", data], check=True, timeout=30)
+                assert report.exists(), "Background restart did not restore session and draft"
+            assert server.refreshes == 2, "Refresh rotation did not survive the second process restart"
+            assert not server.creates, "Session recovery submitted a memo"
+            assert not server.errors, server.errors
+        print("Background restart: Connect cookies, DPAPI, draft recovery, 503 retries and cookie rotation passed")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 if __name__ == "__main__":
     run_fixture("api/v1", False, sys.argv[1])
     run_fixture("api", False, sys.argv[1])
+    run_fixture("api/v1", False, sys.argv[1], connect=True)
     run_fixture("api/v1", True, sys.argv[2])
+    run_session_recovery(sys.argv[1], sys.argv[2])

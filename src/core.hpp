@@ -119,6 +119,8 @@ private:
     std::string request(const std::string& path, const std::string& method = "GET",
                         const std::string& body = {}, bool authenticated = false);
     void refresh();
+    std::string authRequest(const std::string& procedure, const std::string& restPath,
+                            const std::string& body = "{}", bool authenticated = false);
     std::string authenticated(const std::string& path, const std::string& method = "GET", const std::string& body = {});
     User currentUser();
     Server server_;
@@ -126,6 +128,7 @@ private:
     User user_;
     std::string token_;
     std::string api_;
+    bool connectAuth_ = false;
     int creatorFilter_ = 0;
     int timeoutMs_ = 10000;
     std::function<void(const std::vector<Cookie>&)> persist_;

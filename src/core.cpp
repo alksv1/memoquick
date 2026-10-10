@@ -169,6 +169,7 @@ HttpResponse httpRequest(const Server& server, const std::wstring& path,
     if (!WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &redirects, sizeof(redirects)) ||
         !WinHttpSetOption(request.get(), WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled))) networkError(creating);
     std::wstring headers = L"Accept: application/json\r\nOrigin: " + server.origin + L"\r\n";
+    if (path.find(L"/memos.api.v1.") != std::wstring::npos) headers += L"Connect-Protocol-Version: 1\r\n";
     if (!body.empty()) headers += L"Content-Type: application/json; charset=utf-8\r\n";
     if (!token.empty()) headers += L"Authorization: Bearer " + wide(token) + L"\r\n";
     if (!cookies.empty()) headers += L"Cookie: " + wide(cookies) + L"\r\n";
@@ -245,6 +246,17 @@ void Client::discover() {
                 throw Error("需要 Memos 0.26 或更新版本。", ErrorKind::Validation);
             }
             api_ = prefix;
+            // Browser authentication uses Connect. The REST gateway can wrap Set-Cookie
+            // as gRPC metadata and does not share its incoming Cookie mapping.
+            try {
+                const auto profileConnect = parseJson(request("memos.api.v1.InstanceService/GetInstanceProfile", "POST", "{}"));
+                connectAuth_ = !field(profileConnect, "version").empty();
+            } catch (const Error& error) {
+                if (error.kind != ErrorKind::Protocol && error.status != 404 && error.status != 405 && error.status != 410) {
+                    api_.clear();
+                    throw;
+                }
+            }
             return;
         } catch (const Error& error) {
             if (error.kind != ErrorKind::Protocol && error.status != 404 && error.status != 410) throw;
@@ -256,21 +268,31 @@ User Client::signIn(const std::string& username, const std::string& password) {
     if (trim(username).empty() || password.empty()) throw Error("请填写用户名和密码。", ErrorKind::Validation);
     discover();
     const Json body = { {"passwordCredentials", {{"username", trim(username)}, {"password", password}}} };
-    const auto result = parseJson(request(api_ + "/auth/signin", "POST", body.dump()));
+    const auto result = parseJson(authRequest("SignIn", "signin", body.dump()));
     token_ = field(result, "accessToken");
     if (token_.empty()) token_ = field(result, "access_token");
     if (token_.empty()) throw Error("服务未返回登录会话，请检查 Memos 版本。", ErrorKind::Protocol);
+    const auto refreshPath = server_.basePath + wide(connectAuth_ ? "memos.api.v1.AuthService/RefreshToken" : api_ + "/auth/refresh");
+    const auto refreshCookies = jar_.header(refreshPath, server_.secure);
+    if (!refreshCookies.starts_with("memos_refresh=") && refreshCookies.find("; memos_refresh=") == std::string::npos)
+        throw Error("服务未返回可恢复的登录凭据，请检查 Memos 版本或反向代理的 Cookie 设置。", ErrorKind::Protocol);
     return currentUser();
 }
 void Client::refresh() {
     discover();
-    const auto result = parseJson(request(api_ + "/auth/refresh", "POST", "{}"));
+    const auto result = parseJson(authRequest("RefreshToken", "refresh"));
     token_ = field(result, "accessToken");
     if (token_.empty()) token_ = field(result, "access_token");
     if (token_.empty()) throw Error("无法恢复登录，请重新登录。", ErrorKind::Auth);
 }
+std::string Client::authRequest(const std::string& procedure, const std::string& restPath,
+                                const std::string& body, bool authenticated) {
+    if (connectAuth_) return request("memos.api.v1.AuthService/" + procedure, "POST", body, authenticated);
+    return request(api_ + "/auth/" + restPath, restPath == "me" ? "GET" : "POST",
+                   restPath == "me" ? "" : body, authenticated);
+}
 User Client::currentUser() {
-    const auto result = parseJson(request(api_ + "/auth/me", "GET", {}, true));
+    const auto result = parseJson(authRequest("GetCurrentUser", "me", "{}", true));
     const auto it = result.find("user");
     if (it == result.end() || !it->is_object()) throw Error("无法确认登录账号，请重新登录。", ErrorKind::Auth);
     user_ = { field(*it, "name"), field(*it, "displayName") };
@@ -307,7 +329,7 @@ std::string Client::createMemo(const Draft& draft) {
 }
 void Client::signOut() {
     try {
-        if (!api_.empty()) request(api_ + "/auth/signout", "POST", "{}", true);
+        if (!api_.empty()) authRequest("SignOut", "signout", "{}", true);
     } catch (...) {
         token_.clear(); user_ = {}; jar_.cookies.clear();
         if (persist_) persist_(jar_.cookies);

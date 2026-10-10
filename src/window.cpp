@@ -11,15 +11,22 @@ namespace mq {
 namespace {
 constexpr UINT_PTR DraftTimer = 1;
 constexpr UINT_PTR PositionTimer = 2;
+constexpr UINT_PTR TrayTimer = 4;
+constexpr UINT_PTR ResumeTimer = 5;
 constexpr DWORD WindowStyle = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN;
-void trayIcon(HWND window, HINSTANCE instance, DWORD operation) {
+bool trayIcon(HWND window, HINSTANCE instance, DWORD operation) {
     NOTIFYICONDATAW icon{};
     icon.cbSize = sizeof(icon); icon.hWnd = window; icon.uID = 1;
     icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     icon.uCallbackMessage = TrayMessage;
     icon.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
     wcscpy_s(icon.szTip, L"MemoQuick · 随手记下");
-    Shell_NotifyIconW(operation, &icon);
+    const bool succeeded = Shell_NotifyIconW(operation, &icon) != FALSE;
+    if (operation == NIM_ADD) {
+        if (succeeded) KillTimer(window, TrayTimer);
+        else SetTimer(window, TrayTimer, 3000, nullptr);
+    }
+    return succeeded;
 }
 bool imeComposing(HWND control) {
     const auto context = ImmGetContext(control);
@@ -68,6 +75,12 @@ HWND Window::create(HINSTANCE instance, bool background) {
     trayIcon(handle_, instance_, NIM_ADD);
     hotkeyRegistered_ = smoke_ || registerHotkey(config_.modifiers, config_.key);
     if (!hotkeyRegistered_) setNotice("快捷键已被占用，请在设置中换一个组合。");
+    // A manual launch after moving/upgrading the portable executable repairs its Run path.
+    // Do not rewrite Run while Windows is executing the background startup entry.
+    if (!smoke_ && !background && config_.startAtLogin) {
+        try { setStartup(true); }
+        catch (const std::exception& error) { setNotice(error.what()); }
+    }
     if (!background) show();
     if (!smoke_ && !config_.server.empty() && !store_.cookies(config_.server).empty()) restore();
     return handle_;
@@ -77,6 +90,7 @@ void Window::show() {
     ensurePositionVisible();
     if (!smoke_) SetForegroundWindow(handle_);
     if (view_ == View::Compose && !busy_) SetFocus(control(Editor));
+    if (resumePending_ && !busy_ && view_ == View::Login) restore();
 }
 void Window::ensurePositionVisible() {
     if (IsIconic(handle_) || IsZoomed(handle_)) return;
@@ -456,7 +470,7 @@ void Window::launch(Action action, std::function<void(Completion&)> work) {
     worker_ = std::jthread([this, action, work = std::move(work)] {
         auto result = std::make_unique<Completion>(); result->action = action;
         try { work(*result); }
-        catch (const Error& error) { result->error = error.what(); result->errorKind = error.kind; }
+        catch (const Error& error) { result->error = error.what(); result->errorKind = error.kind; result->status = error.status; }
         catch (const std::exception&) { result->error = "操作未能完成，请检查本地数据与服务状态；草稿已保留。"; }
         const auto pointer = result.release();
         if (!PostMessageW(handle_, CompleteMessage, 0, reinterpret_cast<LPARAM>(pointer))) delete pointer;
@@ -506,6 +520,7 @@ void Window::complete(std::unique_ptr<Completion> result) {
             settingEditor_ = true; text(Editor, L""); settingEditor_ = false;
             setView(View::Login);
         } else if (result->error.empty() && (result->action == Action::Login || result->action == Action::Resume)) {
+            KillTimer(handle_, ResumeTimer); resumePending_ = false; resumeAttempts_ = 0;
             enterCompose();
         } else if (result->action == Action::Save && result->saved) {
             extras_ = {}; updateMetadata();
@@ -515,6 +530,14 @@ void Window::complete(std::unique_ptr<Completion> result) {
             if (result->error.empty()) { rememberPosition(); ShowWindow(handle_, SW_HIDE); }
         }
         if (!result->error.empty()) {
+            if (result->action == Action::Resume) {
+                resumePending_ = result->errorKind == ErrorKind::Network || result->status == 429 || result->status >= 500;
+                if (resumePending_) {
+                    constexpr UINT delays[]{1000, 5000, 15000, 30000, 60000};
+                    SetTimer(handle_, ResumeTimer, delays[std::min(resumeAttempts_, 4u)], nullptr);
+                    if (resumeAttempts_ < 4) ++resumeAttempts_;
+                }
+            }
             if (result->errorKind == ErrorKind::Auth) { text(PasswordInput, L""); setView(View::Login); }
             setNotice(result->error);
         } else if (!hotkeyRegistered_) { setNotice("快捷键已被占用，请在设置中换一个组合。"); }
@@ -527,6 +550,7 @@ void Window::login() {
     auto password = utf8(text(PasswordInput));
     if (username.empty() || password.empty()) throw Error("请填写用户名和密码。", ErrorKind::Validation);
     if (!flushDraft()) return;
+    KillTimer(handle_, ResumeTimer); resumePending_ = false; resumeAttempts_ = 0;
     text(PasswordInput, L"");
     launch(Action::Login, [this, server, username, password = std::move(password)](Completion& result) mutable {
         auto next = std::make_unique<Client>(server, store_.cookies(server.url),
@@ -540,6 +564,7 @@ void Window::login() {
 void Window::restore() {
     if (busy_ || config_.server.empty() || !flushDraft()) return;
     const auto server = parseServer(config_.server);
+    KillTimer(handle_, ResumeTimer);
     launch(Action::Resume, [this, server](Completion& result) {
         auto next = std::make_unique<Client>(server, store_.cookies(server.url),
             [this, url = server.url](const auto& cookies) { store_.saveCookies(url, cookies); });
@@ -565,6 +590,7 @@ void Window::save() {
 }
 void Window::logout() {
     if (busy_ || !flushDraft()) return;
+    KillTimer(handle_, ResumeTimer); resumePending_ = false; resumeAttempts_ = 0;
     launch(Action::Logout, [this](Completion&) {
         if (client_) client_->signOut();
         else if (!config_.server.empty()) store_.saveCookies(config_.server, {});
@@ -596,6 +622,7 @@ void Window::settingsSave() {
     }
     if (changed) { UnregisterHotKey(handle_, hotkeyId_); hotkeyId_ = hotkeyId_ == 1 ? 2 : 1; hotkeyRegistered_ = true; }
     config_ = next; setNotice(""); setView(beforeSettings_);
+    if (resumePending_ && view_ == View::Login) restore();
 }
 void Window::browser() {
     if (!config_.server.empty()) ShellExecuteW(handle_, L"open", wide(parseServer(config_.server).url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -731,6 +758,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         rememberPosition(); return TRUE;
     case WM_ENDSESSION: if (wparam) { flushDraft(); rememberPosition(); DestroyWindow(handle_); } return 0;
     case WM_DESTROY:
+        KillTimer(handle_, TrayTimer); KillTimer(handle_, ResumeTimer);
         UnregisterHotKey(handle_, 1); UnregisterHotKey(handle_, 2);
         trayIcon(handle_, instance_, NIM_DELETE); PostQuitMessage(0); return 0;
     case WM_HOTKEY:
@@ -747,6 +775,8 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (wparam == DraftTimer) flushDraft();
         if (wparam == PositionTimer) rememberPosition();
         if (wparam == 3) recordTick();
+        if (wparam == TrayTimer) trayIcon(handle_, instance_, NIM_ADD);
+        if (wparam == ResumeTimer && resumePending_ && !busy_ && view_ == View::Login) restore();
         return 0;
     case WM_COMMAND: {
         const int id = LOWORD(wparam), event = HIWORD(wparam);

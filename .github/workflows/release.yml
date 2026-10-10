@@ -82,6 +82,9 @@ jobs:
           fixture = runpy.run_path('tests/integration.py')['run_fixture']
           for prefix in ('api/v1', 'api'):
               fixture(prefix, False, 'build/Release/memoquick_tests.exe')
+          fixture('api/v1', False, 'build/Release/memoquick_tests.exe', connect=True)
+          runpy.run_path('tests/integration.py')['run_session_recovery'](
+              'build/Release/memoquick_tests.exe', 'build/Release/MemoQuick.exe')
           '@ | python -
           if ($LASTEXITCODE -ne 0) { throw 'API integration tests failed.' }
 

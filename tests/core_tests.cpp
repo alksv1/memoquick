@@ -43,6 +43,35 @@ void markdownTests() {
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
 }
 void unitTests() {
+    // GIVEN an isolated real registry key, WHEN startup is enabled, repaired and disabled,
+    // THEN the quoted executable uses background mode and removal is idempotent.
+    const auto registryPath = L"Software\\MemoQuick.Tests\\" + std::to_wstring(GetCurrentProcessId());
+    HKEY startupKey = nullptr;
+    try {
+        mq::setStartup(true, registryPath);
+        check(RegOpenKeyExW(HKEY_CURRENT_USER, registryPath.c_str(), 0, KEY_QUERY_VALUE | KEY_SET_VALUE, &startupKey) == ERROR_SUCCESS, "Startup key missing");
+        wchar_t executable[32768]{};
+        check(GetModuleFileNameW(nullptr, executable, 32768) != 0, "Cannot query test executable");
+        const auto expected = L"\"" + std::wstring(executable) + L"\" --background";
+        const auto readStartup = [&] {
+            wchar_t value[32768]{}; DWORD bytes = sizeof(value);
+            check(RegGetValueW(startupKey, nullptr, L"MemoQuick", RRF_RT_REG_SZ, nullptr, value, &bytes) == ERROR_SUCCESS, "Startup value missing");
+            return std::wstring(value);
+        };
+        check(readStartup() == expected, "Startup command is not quoted or background-only");
+        const wchar_t stale[] = L"\"C:\\old folder\\MemoQuick.exe\" --background";
+        check(RegSetValueExW(startupKey, L"MemoQuick", 0, REG_SZ, reinterpret_cast<const BYTE*>(stale), sizeof(stale)) == ERROR_SUCCESS, "Cannot create stale startup fixture");
+        mq::setStartup(true, registryPath);
+        check(readStartup() == expected, "Moved executable did not repair stale startup path");
+        mq::setStartup(false, registryPath); mq::setStartup(false, registryPath);
+        DWORD bytes = 0;
+        check(RegGetValueW(startupKey, nullptr, L"MemoQuick", RRF_RT_REG_SZ, nullptr, nullptr, &bytes) == ERROR_FILE_NOT_FOUND, "Disabling startup retained its value");
+    } catch (...) {
+        if (startupKey) RegCloseKey(startupKey);
+        RegDeleteKeyW(HKEY_CURRENT_USER, registryPath.c_str());
+        throw;
+    }
+    RegCloseKey(startupKey); RegDeleteKeyW(HKEY_CURRENT_USER, registryPath.c_str());
     // GIVEN structured compose metadata, WHEN validated, THEN coordinates and resource boundaries are enforced.
     check(mq::parseLocation(" 赤道 ","0","180") == mq::Location{"赤道",0,180}, "Location boundary parse failed");
     rejects([] { mq::parseLocation("地点","nan","1"); }, mq::ErrorKind::Validation);
@@ -86,6 +115,9 @@ void unitTests() {
     check(jar.cookies.empty(), "Max-Age did not override Expires");
     jar.receive("old=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT", server);
     check(jar.cookies.empty(), "Expired cookie accepted");
+    // GIVEN Memos' Expires-only refresh cookie, WHEN received, THEN it survives a new client session.
+    jar.receive("memos_refresh=future; Path=/; HttpOnly; Expires=Wed, 01 Jan 2098 00:00:00 GMT; SameSite=Lax; Secure", server);
+    check(jar.header(L"/api/v1/auth/refresh", true) == "memos_refresh=future", "Expires-only refresh cookie was dropped");
 
     // GIVEN private data, WHEN encrypted with Windows DPAPI, THEN plaintext is absent and tampering fails.
     const std::string secret = "unique-secret-marker-草稿";
@@ -180,6 +212,11 @@ void unitTests() {
 void apiTests(const std::string& url) {
     // GIVEN a real HTTP fixture, WHEN logging in and refreshing, THEN credentials and Unicode notes reach the API.
     const auto server = mq::parseServer(url);
+    // GIVEN multiple Set-Cookie fields, WHEN WinHTTP sizes and reads each field, THEN none are skipped.
+    const auto headers = mq::httpRequest(server, server.basePath + L"cookie-headers", "GET", {}, {}, {});
+    check(headers.cookies == std::vector<std::string>{
+        "memos_refresh=header-probe; Path=/; HttpOnly; Expires=Wed, 01 Jan 2098 00:00:00 GMT",
+        "auxiliary=second; Path=/; Max-Age=86400"}, "WinHTTP skipped a Set-Cookie header");
     std::vector<mq::Cookie> persisted;
     mq::Client client(server, {}, [&](const auto& cookies) { persisted = cookies; });
     check(client.signIn("alice", "test-password") == mq::User{"users/7", "Alice"}, "Sign-in failed");
@@ -209,9 +246,19 @@ void apiTests(const std::string& url) {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int wmain(int argc, wchar_t** argv) {
     try {
-        if (argc == 3 && std::string(argv[1]) == "--api") apiTests(argv[2]);
+        if (argc == 3 && std::wstring(argv[1]) == L"--api") apiTests(mq::utf8(argv[2]));
+        else if (argc == 4 && std::wstring(argv[1]) == L"--session-seed") {
+            const auto server = mq::parseServer(mq::utf8(argv[2]));
+            mq::Store store(argv[3]);
+            mq::Config config; config.server = server.url;
+            store.saveConfig(config);
+            mq::Client client(server, {}, [&](const auto& cookies) { store.saveCookies(server.url, cookies); });
+            check(client.signIn("alice", "test-password") == mq::User{"users/7", "Alice"}, "Persistent sign-in failed");
+            check(!store.cookies(server.url).empty(), "Sign-in did not persist refresh credentials");
+            store.saveDraft(server.url, "users/7", {"重启后保留的灵感 📝", "PROTECTED"});
+        }
         else unitTests();
         std::cout << checks << " checks passed\n";
         return 0;

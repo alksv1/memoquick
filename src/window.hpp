@@ -31,6 +31,7 @@ struct Completion {
     std::unique_ptr<Client> client;
     std::string error;
     ErrorKind errorKind = ErrorKind::Http;
+    unsigned status = 0;
     bool saved = false;
     std::optional<Draft> draft;
     MemoPage page;
@@ -49,6 +50,7 @@ public:
     std::string notice() const { return notice_; }
     Draft currentDraft() const;
     void smokeLogin(const std::string& server);
+    void smokeResume() { restore(); }
     bool flushDraft();
 private:
     static LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wparam, LPARAM lparam);
@@ -113,6 +115,8 @@ private:
     bool smoke_ = false;
     bool positionReady_ = false;
     bool startupChecked_ = false;
+    bool resumePending_ = false;
+    unsigned resumeAttempts_ = 0;
     int visibility_ = 0;
     int wheelDelta_ = 0;
     Draft extras_;
