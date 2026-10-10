@@ -1,9 +1,11 @@
 #include "storage.hpp"
 #include "markdown.hpp"
 #include "audio.hpp"
+#include "location.hpp"
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <limits>
 
 namespace {
 int checks = 0;
@@ -43,6 +45,21 @@ void markdownTests() {
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
 }
 void unitTests() {
+    // GIVEN a native location fix, WHEN coordinates are shown and submitted,
+    // THEN signed values roundtrip through the real location parser with a decimal point.
+    check(mq::parseLocation("当前位置", mq::utf8(mq::coordinateText(-22.123456)), mq::utf8(mq::coordinateText(114.654321)))
+        == mq::Location{"当前位置", -22.123456, 114.654321}, "Automatic coordinates did not roundtrip");
+    check(mq::coordinateText(0.000001, mq::CoordinateFormat::Rounded) == L"0.000001", "Small coordinates lost decimal precision");
+    const double precise = 114.12345678901234;
+    check(mq::parseLocation("手动位置", "0", mq::utf8(mq::coordinateText(precise))).longitude == precise,
+          "Reopening a manual location reduced its precision");
+    rejects([] { mq::coordinateText(std::numeric_limits<double>::infinity()); }, mq::ErrorKind::Validation);
+    rejects([] { mq::coordinateText(std::numeric_limits<double>::quiet_NaN()); }, mq::ErrorKind::Validation);
+    // GIVEN an unused reader, WHEN cancelled twice, THEN it remains idle without
+    // initializing WinRT, asking for permission or accessing the device's location.
+    mq::LocationReader idle;
+    idle.cancel(); idle.cancel();
+    check(!idle.active() && !idle.poll(), "An idle location reader acquired a position");
     // GIVEN an isolated real registry key, WHEN startup is enabled, repaired and disabled,
     // THEN the quoted executable uses background mode and removal is idempotent.
     const auto registryPath = L"Software\\MemoQuick.Tests\\" + std::to_wstring(GetCurrentProcessId());

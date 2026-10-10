@@ -5,7 +5,6 @@
 #include <imm.h>
 #include <windowsx.h>
 #include <algorithm>
-#include <charconv>
 
 namespace mq {
 namespace {
@@ -13,6 +12,7 @@ constexpr UINT_PTR DraftTimer = 1;
 constexpr UINT_PTR PositionTimer = 2;
 constexpr UINT_PTR TrayTimer = 4;
 constexpr UINT_PTR ResumeTimer = 5;
+constexpr UINT_PTR LocationTimer = 6;
 constexpr DWORD WindowStyle = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN;
 bool trayIcon(HWND window, HINSTANCE instance, DWORD operation) {
     NOTIFYICONDATAW icon{};
@@ -119,6 +119,7 @@ bool Window::flushDraft() {
     } catch (const std::exception& error) { setNotice(error.what()); return false; }
 }
 void Window::hide() {
+    stopLocation();
     if (view_ == View::Record && (recorder_.active() || !recording_.empty())) finishRecording(true);
     if (flushDraft()) { rememberPosition(); ShowWindow(handle_, SW_HIDE); }
 }
@@ -262,6 +263,8 @@ void Window::createControls() {
     add(MemoList, L"LISTBOX", L"", LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE);
     add(MoreButton, L"BUTTON", L"更多", BS_OWNERDRAW | WS_TABSTOP);
     add(LocationLabel, L"STATIC", L"名称");
+    add(LocateButton, L"BUTTON", L"当前位置", BS_OWNERDRAW | WS_TABSTOP);
+    add(LocationSettingsButton, L"BUTTON", L"定位设置", BS_OWNERDRAW | WS_TABSTOP);
     add(LocationName, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
     add(LatitudeLabel, L"STATIC", L"纬度");
     add(LatitudeInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
@@ -344,7 +347,9 @@ void Window::layout() {
             place(MemoList, x, 82, contentWidth, std::max(60, height - 130 - noticeHeight));
             place(MoreButton, width - 158, height - 40, 60, 28);
         } else if (view_ == View::Location) {
-            place(LocationLabel, x, 44, contentWidth, 20); place(LocationName, x, 68, contentWidth, 28);
+            place(LocationLabel, x, 44, contentWidth - 84, 20); place(LocationName, x, 68, contentWidth, 28);
+            place(LocateButton, width - 88, 38, 76, 26);
+            place(LocationSettingsButton, x + 60, height - 40, 76, 28);
             const int field = (contentWidth - 12) / 2;
             place(LatitudeLabel, x, 110, field, 20); place(LatitudeInput, x, 134, field, 28);
             place(LongitudeLabel, x + field + 12, 110, field, 20); place(LongitudeInput, x + field + 12, 134, field, 28);
@@ -357,6 +362,7 @@ void Window::layout() {
     InvalidateRect(handle_, nullptr, TRUE);
 }
 void Window::setView(View view) {
+    stopLocation();
     view_ = view;
     if (view != View::Compose) {
         RECT bounds{}; GetWindowRect(handle_, &bounds);
@@ -391,15 +397,10 @@ void Window::setView(View view) {
         visible({SearchInput, SearchButton, MemoList, MoreButton, BackButton, PanelConfirm});
         EnableWindow(control(MoreButton), !memoPage_.nextPage.empty());
     } else if (view == View::Location) {
-        visible({LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput, BackButton, PanelConfirm});
-        const auto coordinate = [](double value) {
-            char buffer[64]{};
-            const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
-            return wide(std::string(buffer, result.ptr));
-        };
+        visible({LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput, BackButton, PanelConfirm, LocateButton});
         text(LocationName, extras_.location ? wide(extras_.location->placeholder) : L"");
-        text(LatitudeInput, extras_.location ? coordinate(extras_.location->latitude) : L"");
-        text(LongitudeInput, extras_.location ? coordinate(extras_.location->longitude) : L"");
+        text(LatitudeInput, extras_.location ? coordinateText(extras_.location->latitude) : L"");
+        text(LongitudeInput, extras_.location ? coordinateText(extras_.location->longitude) : L"");
     } else if (view == View::Record) {
         visible({RecordTime, RecordButton, PreviewButton, BackButton, PanelConfirm});
         text(RecordButton, recording_.empty() ? L"开始录音" : L"重新录制");
@@ -431,13 +432,15 @@ void Window::setBusy(bool busy) {
     }
     SendMessageW(control(Editor), EM_SETREADONLY, busy ? TRUE : FALSE, 0);
     for (const auto id : {AddButton, MetadataButton, SearchInput, SearchButton, MemoList, PanelConfirm, RecordButton, PreviewButton}) EnableWindow(control(id), !busy);
+    for (const auto id : {LocateButton, LocationSettingsButton, LatitudeInput, LongitudeInput}) EnableWindow(control(id), !busy);
     EnableWindow(control(MoreButton), !busy && !memoPage_.nextPage.empty());
     updateMetadata();
     text(LoginButton, busy ? L"连接中…" : L"登录");
     text(SaveButton, busy ? L"保存中…" : L"保存");
 }
-void Window::setNotice(const std::string& notice) {
+void Window::setNotice(const std::string& notice, bool informational) {
     notice_ = notice;
+    noticeInformational_ = informational;
     text(NoticeLabel, wide(notice));
     ShowWindow(control(NoticeLabel), notice.empty() ? SW_HIDE : SW_SHOW);
     layout();
@@ -758,6 +761,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         rememberPosition(); return TRUE;
     case WM_ENDSESSION: if (wparam) { flushDraft(); rememberPosition(); DestroyWindow(handle_); } return 0;
     case WM_DESTROY:
+        stopLocation();
         KillTimer(handle_, TrayTimer); KillTimer(handle_, ResumeTimer);
         UnregisterHotKey(handle_, 1); UnregisterHotKey(handle_, 2);
         trayIcon(handle_, instance_, NIM_DELETE); PostQuitMessage(0); return 0;
@@ -777,6 +781,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (wparam == 3) recordTick();
         if (wparam == TrayTimer) trayIcon(handle_, instance_, NIM_ADD);
         if (wparam == ResumeTimer && resumePending_ && !busy_ && view_ == View::Login) restore();
+        if (wparam == LocationTimer) locationTick();
         return 0;
     case WM_COMMAND: {
         const int id = LOWORD(wparam), event = HIWORD(wparam);
@@ -794,6 +799,11 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (id == SearchButton) searchMemos();
         if (id == MoreButton) searchMemos(true);
         if (id == PanelConfirm) confirmPanel();
+        if (id == LocateButton) locate();
+        if (id == LocationSettingsButton) {
+            const auto opened = ShellExecuteW(handle_, L"open", L"ms-settings:privacy-location", nullptr, nullptr, SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(opened) <= 32) setNotice("无法打开定位设置，请在 Windows 设置中搜索「位置」。");
+        }
         if (id == RecordButton) record();
         if (id == PreviewButton && !recording_.empty()) PlaySoundW(reinterpret_cast<LPCWSTR>(recording_.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
         if (id >= MdBold && id <= MdCodeBlock) markdown(static_cast<MarkdownAction>(id - MdBold));
@@ -826,7 +836,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         const auto dc = reinterpret_cast<HDC>(wparam);
         const auto id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
         const auto colors = palette(config_.dark);
-        SetTextColor(dc, id == NoticeLabel ? colors.error : id == AccountLabel ? colors.muted : colors.ink);
+        SetTextColor(dc, id == NoticeLabel ? (noticeInformational_ ? colors.muted : colors.error) : id == AccountLabel ? colors.muted : colors.ink);
         SetBkColor(dc, colors.background);
         return reinterpret_cast<LRESULT>(msg == WM_CTLCOLOREDIT ? inputBackground_ : background_);
     }

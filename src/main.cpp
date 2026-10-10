@@ -114,6 +114,10 @@ void CALLBACK menuFixtureTick(HWND window, UINT, UINT_PTR timer, DWORD) {
             }, reinterpret_cast<LPARAM>(&fixture));
         }
         if (!fixture.popup || !fixture.menu) return;
+        // Menu selection state can change before its on-screen paint completes.
+        // Synchronize this screenshot fixture; focus-frame tests remain unforced.
+        RedrawWindow(fixture.popup, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        GdiFlush(); DwmFlush();
         if (fixture.stage == 0) {
             // GIVEN a real tracked popup, WHEN shown in either theme, THEN its background follows the editor.
             RECT bounds{}, item{}; GetWindowRect(fixture.popup, &bounds);
@@ -311,6 +315,18 @@ public:
             stage_ = 5;
             SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::InsertLocation,BN_CLICKED),0);
         } else if (stage_ == 5) {
+            // GIVEN a completed OS fix, WHEN the native fields are filled, THEN
+            // no location is committed until confirmation, and cancellation keeps the draft.
+            require(IsWindowVisible(GetDlgItem(handle,mq::LocateButton)), "Current location button is hidden");
+            const auto before = window_.currentDraft();
+            window_.fillLocation({0,0,250,false});
+            wchar_t locationLabel[64]{};
+            GetWindowTextW(GetDlgItem(handle,mq::LocationName),locationLabel,64);
+            require(std::wstring(locationLabel) == L"当前位置", "Automatic location did not supply a default name");
+            require(window_.currentDraft() == before, "Location was attached before confirmation");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::BackButton,BN_CLICKED),0);
+            require(window_.currentDraft() == before, "Cancelling a location changed the draft");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::InsertLocation,BN_CLICKED),0);
             // GIVEN the native location panel, WHEN invalid and valid values are confirmed, THEN validation preserves the note.
             require(window_.view() == mq::View::Location, "Location panel did not open");
             SetWindowTextW(GetDlgItem(handle,mq::LocationName),L"书桌");
@@ -318,8 +334,18 @@ public:
             SetWindowTextW(GetDlgItem(handle,mq::LongitudeInput),L"114.2");
             SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::PanelConfirm,BN_CLICKED),0);
             require(!window_.currentDraft().location && !window_.notice().empty(), "Invalid location was accepted");
-            SetWindowTextW(GetDlgItem(handle,mq::LatitudeInput),L"22.3");
+            window_.fillLocation({22.3,114.2,120,false});
+            require(window_.notice() == "精度约 120 米", "Location accuracy was not shown");
+            wchar_t latitude[64]{}, longitude[64]{};
+            GetWindowTextW(GetDlgItem(handle,mq::LatitudeInput),latitude,64);
+            GetWindowTextW(GetDlgItem(handle,mq::LongitudeInput),longitude,64);
+            require(std::wstring(latitude) == L"22.300000" && std::wstring(longitude) == L"114.200000", "Location fields were not filled");
             screenshot(handle,output_ / L"location.bmp");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::ThemeButton,BN_CLICKED),0);
+            screenshot(handle,output_ / L"location-dark.bmp");
+            SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::ThemeButton,BN_CLICKED),0);
+            window_.fillLocation({22.3,114.2,120,true});
+            require(window_.notice() == "Windows 默认位置，请核对。", "Default Windows location was presented as an actual fix");
             SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::PanelConfirm,BN_CLICKED),0);
             require(window_.currentDraft().location == mq::Location{"书桌",22.3,114.2}, "Location confirmation lost coordinates");
             require(window_.currentDraft().content == draft_.content, "Location panel changed editor content");

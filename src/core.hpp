@@ -9,7 +9,7 @@
 #include <optional>
 
 namespace mq {
-enum class ErrorKind { Validation, Network, Auth, Protocol, Storage, Http };
+enum class ErrorKind { Validation, Network, Auth, Protocol, Storage, Http, LocationDenied };
 class Error : public std::runtime_error {
 public:
     Error(std::string message, ErrorKind kind = ErrorKind::Http, unsigned status = 0)

@@ -2,6 +2,7 @@
 #include "storage.hpp"
 #include "markdown.hpp"
 #include "audio.hpp"
+#include "location.hpp"
 #include <commctrl.h>
 #include <functional>
 #include <map>
@@ -21,7 +22,7 @@ enum ControlId : int {
     MdBold, MdItalic, MdHeading, MdLink, MdBullet, MdNumbered, MdTask, MdQuote, MdInlineCode, MdCodeBlock,
     AddButton, MetadataButton, SearchInput, SearchButton, MemoList, MoreButton,
     LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput,
-    PanelConfirm, RecordButton, RecordTime, PreviewButton,
+    PanelConfirm, RecordButton, RecordTime, PreviewButton, LocateButton, LocationSettingsButton,
     InsertAttachment = 1000, InsertImage, InsertAudio, InsertMemo, InsertLocation, RetryAttachments
 };
 enum class View { Login, Compose, Settings, Link, Location, Record };
@@ -51,6 +52,7 @@ public:
     Draft currentDraft() const;
     void smokeLogin(const std::string& server);
     void smokeResume() { restore(); }
+    void fillLocation(const LocationFix& fix);
     bool flushDraft();
 private:
     static LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wparam, LPARAM lparam);
@@ -76,12 +78,15 @@ private:
     void updateMetadata();
     void searchMemos(bool more = false);
     void confirmPanel();
+    void locate();
+    void locationTick();
+    void stopLocation();
     void record();
     void finishRecording(bool attach);
     void recordTick();
     void setView(View view);
     void setBusy(bool busy);
-    void setNotice(const std::string& notice);
+    void setNotice(const std::string& notice, bool informational = false);
     void enterCompose();
     void login();
     void save();
@@ -123,11 +128,13 @@ private:
     MemoPage memoPage_;
     std::string memoSearch_;
     AudioRecorder recorder_;
+    LocationReader locationReader_;
     std::string recording_;
     unsigned dpi_ = 96;
     HFONT font_ = nullptr, headingFont_ = nullptr, smallFont_ = nullptr;
     HBRUSH background_ = nullptr, inputBackground_ = nullptr;
     std::string notice_;
+    bool noticeInformational_ = false;
     UINT taskbarCreated_ = 0;
     int hotkeyId_ = 1;
 };

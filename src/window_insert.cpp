@@ -2,6 +2,7 @@
 #include <commdlg.h>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 
 namespace mq {
 void Window::insertMenu() {
@@ -147,6 +148,7 @@ void Window::searchMemos(bool more) {
     launch(Action::Search, [this, search, page](Completion& result) { result.page = client_->listMemos(search, page); });
 }
 void Window::confirmPanel() {
+    if (locationReader_.active()) return;
     if (view_ == View::Link) {
         const auto index = SendMessageW(control(MemoList), LB_GETCURSEL, 0, 0);
         if (index == LB_ERR || static_cast<size_t>(index) >= memoPage_.memos.size()) return;
@@ -161,6 +163,51 @@ void Window::confirmPanel() {
     else return;
     draftDirty_ = true; updateMetadata();
     if (flushDraft()) { setNotice(""); setView(View::Compose); }
+}
+void Window::stopLocation() {
+    KillTimer(handle_, 6);
+    locationReader_.cancel();
+    text(LocateButton, L"当前位置");
+    for (const auto id : {LatitudeInput, LongitudeInput, PanelConfirm}) EnableWindow(control(id), !busy_);
+}
+void Window::locate() {
+    if (busy_ || view_ != View::Location) return;
+    if (locationReader_.active()) { stopLocation(); setNotice(""); return; }
+    setNotice(""); ShowWindow(control(LocationSettingsButton), SW_HIDE);
+    try {
+        locationReader_.start();
+        text(LocateButton, L"取消定位");
+        for (const auto id : {LatitudeInput, LongitudeInput, PanelConfirm}) EnableWindow(control(id), FALSE);
+        if (!SetTimer(handle_, 6, 100, nullptr)) throw Error("无法开始定位，请重试。", ErrorKind::Validation);
+    } catch (const Error& error) {
+        stopLocation(); setNotice(error.what());
+        if (error.kind == ErrorKind::LocationDenied) ShowWindow(control(LocationSettingsButton), SW_SHOW);
+    }
+}
+void Window::locationTick() {
+    try {
+        const auto fix = locationReader_.poll();
+        if (fix) fillLocation(*fix);
+    } catch (const Error& error) {
+        stopLocation(); setNotice(error.what());
+        if (error.kind == ErrorKind::LocationDenied) ShowWindow(control(LocationSettingsButton), SW_SHOW);
+    }
+}
+void Window::fillLocation(const LocationFix& fix) {
+    if (view_ != View::Location) return;
+    if (!validLocation({"当前位置", fix.latitude, fix.longitude}) || !std::isfinite(fix.accuracy) || fix.accuracy < 0)
+        throw Error("Windows 返回了无效位置，可重试或手动填写。", ErrorKind::Validation);
+    const auto latitude = coordinateText(fix.latitude, CoordinateFormat::Rounded);
+    const auto longitude = coordinateText(fix.longitude, CoordinateFormat::Rounded);
+    stopLocation();
+    if (trim(utf8(text(LocationName))).empty()) text(LocationName, L"当前位置");
+    text(LatitudeInput, latitude); text(LongitudeInput, longitude);
+    if (fix.isDefault) setNotice("Windows 默认位置，请核对。");
+    else {
+        const auto metres = static_cast<long long>(std::clamp(std::ceil(fix.accuracy), 1.0, 40075000.0));
+        setNotice("精度约 " + std::to_string(metres) + " 米", true);
+    }
+    SetFocus(control(LocationName));
 }
 void Window::record() {
     if (recorder_.active()) { finishRecording(false); return; }

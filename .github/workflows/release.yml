@@ -101,7 +101,7 @@ jobs:
           Copy-Item -LiteralPath $binary.FullName -Destination "release/$name.exe"
           Copy-Item -LiteralPath $binary.FullName -Destination package/MemoQuick.exe
           Copy-Item -LiteralPath LICENSE, THIRD_PARTY.md -Destination package
-          Copy-Item -LiteralPath third_party/LICENSE-json.txt -Destination package/third_party
+          Get-ChildItem -LiteralPath third_party -Filter 'LICENSE-*.txt' -File | Copy-Item -Destination package/third_party
           Compress-Archive -Path package/* -DestinationPath "release/$name.zip"
           $checksums = Get-FileHash -Algorithm SHA256 -LiteralPath "release/$name.exe", "release/$name.zip" |
             ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path -Leaf $_.Path)" }
