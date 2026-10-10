@@ -1,6 +1,6 @@
 # MemoQuick
 
-独立的 Memos 快速记录工具，当前版本 **0.2.3**。C++20 + Win32 原生窗口，直接连接已有 Memos 服务。
+独立的 Memos 快速记录工具，当前版本 **0.2.4**。C++20 + Win32 原生窗口，直接连接已有 Memos 服务。
 不依赖 Memospot、Electron、WebView、Node.js、Python 或 .NET 运行时。
 
 ## 使用
@@ -68,7 +68,11 @@ Windows 需允许桌面应用访问麦克风；无设备或权限不足会显示
 可在 Memos 的附件库中清理未使用附件。关联不改变原记录的访问权限；位置随记录的可见范围展示。
 位置面板点击「当前位置」可通过 Windows 定位自动填入经纬度，显示大致精度；确认后才附到记录。
 首次使用需允许 Windows 位置权限，未开启时可点「定位设置」；定位过程中可取消，收起或离开面板也会停止请求。
-保留手动坐标输入，不包含地图选点或地址查询。录音不包含 AI 转写。
+定位后自动查询地址名称，保留你手动输入的名称；地名服务不可用时保留坐标，仍可手动填写。
+地名查询沿用 Memos 的 [Nominatim](https://github.com/usememos/memos/blob/v0.31.0/web/src/components/map/useReverseGeocoding.ts) 方式，将坐标发送给 OpenStreetMap，不发送 Memos 登录凭据、笔记或账号。
+在设置的「地名服务」中可替换为兼容 Nominatim 的 HTTPS reverse 接口地址，留空可停用。仅本机测试服务允许 HTTP，不支持地址中的账号、查询参数或片段。
+公共服务需遵守 [Nominatim 使用规则](https://operations.osmfoundation.org/policies/nominatim/)：用户主动触发、低频查询、总流量不超过每秒一次、缓存结果、显示来源，并可按要求切换服务。应用每次运行缓存最多 100 个成功结果；大规模分发需改用自建或商业服务。
+查询可取消，8 秒后结束等待；无自动重试或后台定位，不包含地图选点。录音不包含 AI 转写。
 
 行为依据见 [0.2.0 升级说明](RELEASE_NOTES.md)，版本升级自动兼容 0.1 的会话、草稿、主题与位置数据。
 

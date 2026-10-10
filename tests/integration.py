@@ -53,7 +53,24 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         path = parsed.path.removeprefix("/notes/")
         query = parse_qs(parsed.query)
-        if path == "cookie-headers":
+        if path.startswith("reverse"):
+            assert not self.headers.get("Authorization") and not self.headers.get("Cookie"), "Geocoding received Memos credentials"
+            assert "MemoQuick/" in self.headers.get("User-Agent", "")
+            assert query["format"] == ["json"] and query["accept-language"] == ["zh-CN"]
+            if path == "reverse":
+                self.send_json(200, {"display_name": "中国，广东省，深圳市，南山区"})
+            elif path == "reverse-empty":
+                self.send_json(200, {})
+            elif path == "reverse-large":
+                self.send_json(200, {"display_name": "x" * 70000})
+            elif path == "reverse-redirect":
+                self.send_response(302)
+                self.send_header("Location", "/notes/reverse")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_json(503, {})
+        elif path == "cookie-headers":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", "2")

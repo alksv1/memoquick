@@ -3,6 +3,7 @@
 #include "markdown.hpp"
 #include "audio.hpp"
 #include "location.hpp"
+#include "geocoding.hpp"
 #include <commctrl.h>
 #include <functional>
 #include <map>
@@ -23,6 +24,7 @@ enum ControlId : int {
     AddButton, MetadataButton, SearchInput, SearchButton, MemoList, MoreButton,
     LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput,
     PanelConfirm, RecordButton, RecordTime, PreviewButton, LocateButton, LocationSettingsButton,
+    GeocodingLabel, GeocodingInput, LocationAttribution,
     InsertAttachment = 1000, InsertImage, InsertAudio, InsertMemo, InsertLocation, RetryAttachments
 };
 enum class View { Login, Compose, Settings, Link, Location, Record };
@@ -53,6 +55,7 @@ public:
     void smokeLogin(const std::string& server);
     void smokeResume() { restore(); }
     void fillLocation(const LocationFix& fix);
+    void fillLocationName(const std::string& name);
     bool flushDraft();
 private:
     static LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wparam, LPARAM lparam);
@@ -129,6 +132,9 @@ private:
     std::string memoSearch_;
     AudioRecorder recorder_;
     LocationReader locationReader_;
+    LocationNames locationNames_;
+    std::wstring locationAutomaticName_, locationNameBaseline_, locationLatitudeBaseline_, locationLongitudeBaseline_;
+    bool locationNameEdited_ = false, locationNameReplaceable_ = false;
     std::string recording_;
     unsigned dpi_ = 96;
     HFONT font_ = nullptr, headingFont_ = nullptr, smallFont_ = nullptr;

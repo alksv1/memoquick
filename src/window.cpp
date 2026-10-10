@@ -253,6 +253,9 @@ void Window::createControls() {
         return result;
     }, 1, reinterpret_cast<DWORD_PTR>(this));
     add(StartupInput, L"BUTTON", L"开机启动", BS_OWNERDRAW | WS_TABSTOP);
+    add(GeocodingLabel, L"STATIC", L"地名服务（留空停用）");
+    add(GeocodingInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
+    SendMessageW(control(GeocodingInput), EM_SETLIMITTEXT, 2048, 0);
     add(SettingsSaveButton, L"BUTTON", L"完成", BS_OWNERDRAW | WS_TABSTOP);
     add(BackButton, L"BUTTON", L"返回", BS_OWNERDRAW | WS_TABSTOP);
     add(LogoutButton, L"BUTTON", L"退出登录", BS_OWNERDRAW | WS_TABSTOP);
@@ -263,6 +266,7 @@ void Window::createControls() {
     add(MemoList, L"LISTBOX", L"", LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE);
     add(MoreButton, L"BUTTON", L"更多", BS_OWNERDRAW | WS_TABSTOP);
     add(LocationLabel, L"STATIC", L"名称");
+    add(LocationAttribution, L"BUTTON", L"© OpenStreetMap · 地名查询", BS_OWNERDRAW | WS_TABSTOP);
     add(LocateButton, L"BUTTON", L"当前位置", BS_OWNERDRAW | WS_TABSTOP);
     add(LocationSettingsButton, L"BUTTON", L"定位设置", BS_OWNERDRAW | WS_TABSTOP);
     add(LocationName, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
@@ -332,10 +336,12 @@ void Window::layout() {
     } else if (view_ == View::Settings) {
         place(HotkeyLabel, x, 48, 72, 22);
         place(HotkeyInput, x + 82, 44, contentWidth - 82, 28);
-        place(StartupInput, x, 84, 130, 28);
-        place(AccountLabel, x, 128, contentWidth, 22);
-        place(BrowserButton, x - 4, 158, 106, 28);
-        place(LogoutButton, x + 108, 158, 88, 28);
+        place(StartupInput, x, 84, 120, 28);
+        place(GeocodingLabel, x, 116, contentWidth, 20);
+        place(GeocodingInput, x, 138, contentWidth, 28);
+        place(AccountLabel, x, 172, contentWidth, 20);
+        place(BrowserButton, x + 130, 84, 106, 28);
+        place(LogoutButton, x + 242, 84, 88, 28);
         place(BackButton, width - 160, height - 40, 64, 28);
         place(SettingsSaveButton, width - 88, height - 40, 76, 28);
     } else {
@@ -348,6 +354,7 @@ void Window::layout() {
             place(MoreButton, width - 158, height - 40, 60, 28);
         } else if (view_ == View::Location) {
             place(LocationLabel, x, 44, contentWidth - 84, 20); place(LocationName, x, 68, contentWidth, 28);
+            place(LocationAttribution, x - 4, 170, contentWidth, 24);
             place(LocateButton, width - 88, 38, 76, 26);
             place(LocationSettingsButton, x + 60, height - 40, 76, 28);
             const int field = (contentWidth - 12) / 2;
@@ -384,7 +391,8 @@ void Window::setView(View view) {
         updateMetadata();
         for (int id = MdBold; id <= MdCodeBlock; ++id) ShowWindow(control(id), SW_SHOW);
     } else if (view == View::Settings) {
-        visible({HotkeyLabel, HotkeyInput, StartupInput, SettingsSaveButton, BackButton, AccountLabel});
+        visible({HotkeyLabel, HotkeyInput, StartupInput, SettingsSaveButton, BackButton, AccountLabel, GeocodingLabel, GeocodingInput});
+        text(GeocodingInput, wide(config_.geocodingEndpoint));
         if (!user_.name.empty() || !config_.server.empty()) visible({LogoutButton, BrowserButton});
         BYTE modifiers = 0;
         if (config_.modifiers & MOD_CONTROL) modifiers |= HOTKEYF_CONTROL;
@@ -397,10 +405,12 @@ void Window::setView(View view) {
         visible({SearchInput, SearchButton, MemoList, MoreButton, BackButton, PanelConfirm});
         EnableWindow(control(MoreButton), !memoPage_.nextPage.empty());
     } else if (view == View::Location) {
+        locationAutomaticName_.clear();
         visible({LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput, BackButton, PanelConfirm, LocateButton});
         text(LocationName, extras_.location ? wide(extras_.location->placeholder) : L"");
         text(LatitudeInput, extras_.location ? coordinateText(extras_.location->latitude) : L"");
         text(LongitudeInput, extras_.location ? coordinateText(extras_.location->longitude) : L"");
+        if (!config_.geocodingEndpoint.empty()) visible({LocationAttribution});
     } else if (view == View::Record) {
         visible({RecordTime, RecordButton, PreviewButton, BackButton, PanelConfirm});
         text(RecordButton, recording_.empty() ? L"开始录音" : L"重新录制");
@@ -427,7 +437,7 @@ void Window::setBusy(bool busy) {
     busy_ = busy;
     for (int id = MdBold; id <= MdCodeBlock; ++id) EnableWindow(control(id), !busy);
     for (const auto id : {ServerInput, UsernameInput, PasswordInput, LoginButton, ResumeButton, Visibility,
-            SaveButton, SettingsButton, ThemeButton, HotkeyInput, StartupInput, SettingsSaveButton, BackButton, LogoutButton}) {
+            SaveButton, SettingsButton, ThemeButton, HotkeyInput, StartupInput, GeocodingInput, SettingsSaveButton, BackButton, LogoutButton}) {
         EnableWindow(control(id), !busy);
     }
     SendMessageW(control(Editor), EM_SETREADONLY, busy ? TRUE : FALSE, 0);
@@ -613,6 +623,8 @@ void Window::settingsSave() {
     if (flags & HOTKEYF_ALT) next.modifiers |= MOD_ALT;
     if (flags & HOTKEYF_SHIFT) next.modifiers |= MOD_SHIFT;
     next.startAtLogin = startupChecked_;
+    next.geocodingEndpoint = trim(utf8(text(GeocodingInput)));
+    if (!next.geocodingEndpoint.empty()) geocodingUrl(next.geocodingEndpoint, 0, 0);
     const bool changed = next.modifiers != config_.modifiers || next.key != config_.key || !hotkeyRegistered_;
     if (changed && !registerHotkey(next.modifiers, next.key, true)) throw Error("快捷键无效或已被占用，请使用含 Ctrl 或 Alt 的其他组合。", ErrorKind::Validation);
     try {
@@ -785,6 +797,8 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         return 0;
     case WM_COMMAND: {
         const int id = LOWORD(wparam), event = HIWORD(wparam);
+        if (event == EN_CHANGE && view_ == View::Location && locationNameReplaceable_
+            && (id == LocationName || id == LatitudeInput || id == LongitudeInput)) locationNameEdited_ = true;
         if (!settingEditor_ && !busy_ && ((id == Editor && event == EN_CHANGE) || (id == Visibility && event == CBN_SELCHANGE))) {
             draftDirty_ = true; SetTimer(handle_, DraftTimer, 400, nullptr);
         }
@@ -800,6 +814,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (id == MoreButton) searchMemos(true);
         if (id == PanelConfirm) confirmPanel();
         if (id == LocateButton) locate();
+        if (id == LocationAttribution) ShellExecuteW(handle_, L"open", L"https://www.openstreetmap.org/copyright", nullptr, nullptr, SW_SHOWNORMAL);
         if (id == LocationSettingsButton) {
             const auto opened = ShellExecuteW(handle_, L"open", L"ms-settings:privacy-location", nullptr, nullptr, SW_SHOWNORMAL);
             if (reinterpret_cast<INT_PTR>(opened) <= 32) setNotice("无法打开定位设置，请在 Windows 设置中搜索「位置」。");

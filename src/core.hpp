@@ -88,6 +88,7 @@ struct Config {
     unsigned key = 'M';
     bool startAtLogin = false;
     bool dark = false;
+    std::string geocodingEndpoint = "https://nominatim.openstreetmap.org/reverse";
     bool operator==(const Config&) const = default;
 };
 struct HttpResponse {

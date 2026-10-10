@@ -167,12 +167,14 @@ void Window::confirmPanel() {
 void Window::stopLocation() {
     KillTimer(handle_, 6);
     locationReader_.cancel();
+    locationNames_.cancel();
+    locationNameReplaceable_ = false;
     text(LocateButton, L"当前位置");
     for (const auto id : {LatitudeInput, LongitudeInput, PanelConfirm}) EnableWindow(control(id), !busy_);
 }
 void Window::locate() {
     if (busy_ || view_ != View::Location) return;
-    if (locationReader_.active()) { stopLocation(); setNotice(""); return; }
+    if (locationReader_.active() || locationNames_.active()) { stopLocation(); setNotice(""); return; }
     setNotice(""); ShowWindow(control(LocationSettingsButton), SW_HIDE);
     try {
         locationReader_.start();
@@ -187,7 +189,18 @@ void Window::locate() {
 void Window::locationTick() {
     try {
         const auto fix = locationReader_.poll();
-        if (fix) fillLocation(*fix);
+        if (fix) {
+            fillLocation(*fix);
+            if (!config_.geocodingEndpoint.empty() && locationNameReplaceable_) {
+                locationNames_.start(config_.geocodingEndpoint, fix->latitude, fix->longitude);
+                text(LocateButton, L"取消查询");
+                if (!SetTimer(handle_, 6, 100, nullptr)) throw Error("地名查询未能开始，坐标已保留。", ErrorKind::Validation);
+            }
+        }
+        if (const auto name = locationNames_.poll()) {
+            fillLocationName(*name);
+            KillTimer(handle_, 6); text(LocateButton, L"当前位置");
+        }
     } catch (const Error& error) {
         stopLocation(); setNotice(error.what());
         if (error.kind == ErrorKind::LocationDenied) ShowWindow(control(LocationSettingsButton), SW_SHOW);
@@ -199,15 +212,29 @@ void Window::fillLocation(const LocationFix& fix) {
         throw Error("Windows 返回了无效位置，可重试或手动填写。", ErrorKind::Validation);
     const auto latitude = coordinateText(fix.latitude, CoordinateFormat::Rounded);
     const auto longitude = coordinateText(fix.longitude, CoordinateFormat::Rounded);
+    const auto name = text(LocationName);
+    const bool replaceable = trim(utf8(name)).empty() || (!locationAutomaticName_.empty() && name == locationAutomaticName_);
     stopLocation();
-    if (trim(utf8(text(LocationName))).empty()) text(LocationName, L"当前位置");
+    if (replaceable) { text(LocationName, L"当前位置"); locationAutomaticName_ = L"当前位置"; }
     text(LatitudeInput, latitude); text(LongitudeInput, longitude);
+    locationNameBaseline_ = text(LocationName);
+    locationLatitudeBaseline_ = latitude; locationLongitudeBaseline_ = longitude;
+    locationNameReplaceable_ = replaceable; locationNameEdited_ = false;
     if (fix.isDefault) setNotice("Windows 默认位置，请核对。");
     else {
         const auto metres = static_cast<long long>(std::clamp(std::ceil(fix.accuracy), 1.0, 40075000.0));
         setNotice("精度约 " + std::to_string(metres) + " 米", true);
     }
     SetFocus(control(LocationName));
+}
+void Window::fillLocationName(const std::string& name) {
+    if (view_ != View::Location || !locationNameReplaceable_ || locationNameEdited_
+        || text(LocationName) != locationNameBaseline_ || text(LatitudeInput) != locationLatitudeBaseline_
+        || text(LongitudeInput) != locationLongitudeBaseline_) return;
+    if (!validLocation({name, 0, 0})) return;
+    text(LocationName, wide(name));
+    locationAutomaticName_ = wide(name);
+    locationNameReplaceable_ = false;
 }
 void Window::record() {
     if (recorder_.active()) { finishRecording(false); return; }

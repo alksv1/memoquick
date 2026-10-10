@@ -2,10 +2,12 @@
 #include "markdown.hpp"
 #include "audio.hpp"
 #include "location.hpp"
+#include "geocoding.hpp"
 #include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <objbase.h>
 
 namespace {
 int checks = 0;
@@ -45,6 +47,16 @@ void markdownTests() {
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
 }
 void unitTests() {
+    // GIVEN provider responses and configurable URLs, WHEN validated, THEN malformed names and unsafe endpoints are rejected.
+    check(mq::parseLocationName(R"({"display_name":" 中国，广东省，深圳市 "})") == "中国，广东省，深圳市", "Address name was not normalized");
+    for (const auto body : {"{}", "[]", "not json", R"({"display_name":42})", R"({"display_name":"  "})"})
+        rejects([&] { mq::parseLocationName(body); }, mq::ErrorKind::Network);
+    rejects([] { mq::parseLocationName(std::string(65537,'x')); }, mq::ErrorKind::Network);
+    rejects([] { mq::geocodingUrl("https://example.com/reverse?key=secret",0,0); }, mq::ErrorKind::Validation);
+    rejects([] { mq::geocodingUrl("http://example.com/reverse",0,0); }, mq::ErrorKind::Validation);
+    check(mq::geocodingUrl(" https://example.com/custom/reverse ",-22.3,114.2)
+        == "https://example.com/custom/reverse?format=json&accept-language=zh-CN&lat=-22.300000&lon=114.200000", "Custom provider URL lost its path or coordinates");
+
     // GIVEN a native location fix, WHEN coordinates are shown and submitted,
     // THEN signed values roundtrip through the real location parser with a decimal point.
     check(mq::parseLocation("当前位置", mq::utf8(mq::coordinateText(-22.123456)), mq::utf8(mq::coordinateText(114.654321)))
@@ -150,7 +162,7 @@ void unitTests() {
     std::filesystem::create_directories(directory);
     const mq::Draft draft{secret, "PRIVATE"};
     const std::vector<mq::Cookie> cookies{{"memos_refresh", "unique-refresh-value", "/", true, 0}};
-    mq::Config config; config.server = server.url; config.dark = true;
+    mq::Config config; config.server = server.url; config.dark = true; config.geocodingEndpoint = "https://maps.example.com/reverse";
     {
         mq::Store store(directory);
         check(!store.windowPosition(), "New installation already has a window position");
@@ -213,10 +225,10 @@ void unitTests() {
     {
         mq::Store store(directory);
         check(!store.config().dark && store.config().server == server.url, "Legacy settings did not default to Light");
-        store.saveConfig(store.config());
+        auto disabled = store.config(); disabled.geocodingEndpoint.clear(); store.saveConfig(disabled);
     }
     {
-        mq::Store store(directory); check(!store.config().dark, "Light mode did not persist");
+        mq::Store store(directory); check(!store.config().dark && store.config().geocodingEndpoint.empty(), "Theme or disabled geocoding did not persist");
         check(store.windowPosition() == mq::WindowPosition{-640, 240}, "Settings update lost window position");
     }
     // GIVEN corrupted storage, WHEN opened, THEN the original bytes are kept.
@@ -227,6 +239,36 @@ void unitTests() {
     std::filesystem::remove_all(directory);
 }
 void apiTests(const std::string& url) {
+    // GIVEN a real Nominatim-compatible endpoint, WHEN polled on a UI thread,
+    // THEN Unicode names are decoded, repeated coordinates are cached, and failures remain recoverable.
+    const auto waitForName = [](mq::LocationNames& names) {
+        const auto started = GetTickCount64();
+        while (GetTickCount64() - started < 10000) {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+            if (const auto name = names.poll()) return *name;
+            Sleep(10);
+        }
+        throw std::runtime_error("Geocoding fixture timed out");
+    };
+    {
+        mq::LocationNames names;
+        names.start(url + "reverse", 22.3, 114.2);
+        check(waitForName(names) == "中国，广东省，深圳市，南山区", "Reverse geocoding lost the address name");
+        names.start(url + "reverse", 22.3, 114.2);
+        check(names.poll() == "中国，广东省，深圳市，南山区", "Repeated location missed the cache");
+    }
+    for (const auto suffix : {"reverse-empty", "reverse-error", "reverse-large", "reverse-redirect"}) {
+        mq::LocationNames names;
+        names.start(url + suffix, 0, 0);
+        rejects([&] { waitForName(names); }, mq::ErrorKind::Network);
+        check(!names.active(), "Failed geocoding retained an active request");
+    }
+    {
+        mq::LocationNames names;
+        names.start(url + "reverse", 0, 0); names.cancel(); names.cancel();
+        check(!names.active() && !names.poll(), "Cancelled address lookup returned a stale name");
+    }
     // GIVEN a real HTTP fixture, WHEN logging in and refreshing, THEN credentials and Unicode notes reach the API.
     const auto server = mq::parseServer(url);
     // GIVEN multiple Set-Cookie fields, WHEN WinHTTP sizes and reads each field, THEN none are skipped.
@@ -264,6 +306,8 @@ void apiTests(const std::string& url) {
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    const auto apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    struct ApartmentGuard { bool initialized; ~ApartmentGuard() { if (initialized) CoUninitialize(); } } apartmentGuard{SUCCEEDED(apartment)};
     try {
         if (argc == 3 && std::wstring(argv[1]) == L"--api") apiTests(mq::utf8(argv[2]));
         else if (argc == 4 && std::wstring(argv[1]) == L"--session-seed") {

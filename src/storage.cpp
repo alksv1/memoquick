@@ -92,7 +92,8 @@ Store::Store(std::filesystem::path directory) : impl_(std::make_unique<Impl>()) 
             const auto bytes = readFile(configPath);
             const auto value = Json::parse(bytes);
             impl_->config = { value.value("server", ""), value.value("modifiers", static_cast<unsigned>(MOD_CONTROL | MOD_ALT)),
-                value.value("key", static_cast<unsigned>('M')), value.value("startAtLogin", false), value.value("theme", "light") == "dark" };
+                value.value("key", static_cast<unsigned>('M')), value.value("startAtLogin", false), value.value("theme", "light") == "dark",
+                value.value("geocodingEndpoint", "https://nominatim.openstreetmap.org/reverse") };
             if (!impl_->config.server.empty()) parseServer(impl_->config.server);
         }
         const auto privatePath = impl_->directory / L"private.bin";
@@ -119,7 +120,7 @@ void Store::saveWindowPosition(WindowPosition position) {
     impl_->windowPosition = position;
 }
 void Store::saveConfig(const Config& config) {
-    const Json value = { {"server", config.server}, {"modifiers", config.modifiers}, {"key", config.key}, {"startAtLogin", config.startAtLogin}, {"theme", config.dark ? "dark" : "light"} };
+    const Json value = { {"server", config.server}, {"modifiers", config.modifiers}, {"key", config.key}, {"startAtLogin", config.startAtLogin}, {"theme", config.dark ? "dark" : "light"}, {"geocodingEndpoint", config.geocodingEndpoint} };
     const auto plain = value.dump(2);
     const std::vector<unsigned char> bytes(plain.begin(), plain.end());
     std::lock_guard lock(impl_->mutex);
