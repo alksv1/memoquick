@@ -4,6 +4,7 @@
 #include "audio.hpp"
 #include "location.hpp"
 #include "geocoding.hpp"
+#include "clipboard.hpp"
 #include <commctrl.h>
 #include <functional>
 #include <map>
@@ -56,6 +57,7 @@ public:
     void smokeResume() { restore(); }
     void fillLocation(const LocationFix& fix);
     void fillLocationName(const std::string& name);
+    bool pasteAttachments(IDataObject& source);
     bool flushDraft();
 private:
     static LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wparam, LPARAM lparam);
@@ -74,6 +76,7 @@ private:
     void markdown(MarkdownAction action);
     void insertMenu();
     void chooseFiles(bool image);
+    bool pasteClipboard();
     void cacheAttachment(const std::string& filename, const std::string& type, const std::string& bytes, bool image);
     void uploadPending(bool imagesOnly = false);
     void prepareAttachments(Draft& draft, size_t cursor, bool imagesOnly = false);

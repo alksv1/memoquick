@@ -169,9 +169,14 @@ class Handler(BaseHTTPRequestHandler):
                 if "attachments" in data:
                     assert all(set(a) == {"name"} for a in data["attachments"]), "Attachment references have wrong shape"
                     assert len(data["attachments"]) == 2
-                    assert data["relations"] == [{"relatedMemo":{"name":"memos/reference-1"},"type":"REFERENCE"}]
-                    assert data["location"] == ({"placeholder":"赤道","latitude":0,"longitude":0} if not self.server.desktop else {"placeholder":"书桌","latitude":22.3,"longitude":114.2})
-                    assert "/notes/file/attachments/fixture-1/image" in data["content"], "Inline image used the wrong URL or lost the subpath"
+                    if data["content"].startswith("剪贴板粘贴"):
+                        assert data["attachments"] == [{"name":"attachments/fixture-3"},{"name":"attachments/fixture-4"}]
+                        assert "/notes/file/attachments/fixture-3/image" in data["content"]
+                        assert "location" not in data and not data.get("relations")
+                    else:
+                        assert data["relations"] == [{"relatedMemo":{"name":"memos/reference-1"},"type":"REFERENCE"}]
+                        assert data["location"] == ({"placeholder":"赤道","latitude":0,"longitude":0} if not self.server.desktop else {"placeholder":"书桌","latitude":22.3,"longitude":114.2})
+                        assert "/notes/file/attachments/fixture-1/image" in data["content"], "Inline image used the wrong URL or lost the subpath"
                 self.send_json(200, {"name": "memos/fixture"})
         elif path == self.server.prefix + "/attachments:upload":
             if self.server.prefix == "api/v1":
@@ -227,6 +232,10 @@ class Handler(BaseHTTPRequestHandler):
             assert data == b"x"*(2*1024*1024+17), "Uploaded binary changed"
         if metadata["type"] == "audio/wav":
             assert data.startswith(b"RIFF") and data[8:12] == b"WAVE", "Recording is not a WAV attachment"
+        if metadata["filename"] == "剪贴图.png":
+            assert data.startswith(b"\x89PNG\r\n\x1a\n") and b"IEND" in data, "Clipboard image was not encoded as PNG"
+        if metadata["filename"] == "说明.pdf":
+            assert data == b"%PDF-1.7\nclipboard fixture", "Clipboard virtual file bytes changed"
         self.server.files.append((metadata["filename"],data))
         return {"name":f"attachments/fixture-{len(self.server.files)}","filename":metadata["filename"],"type":metadata["type"],"externalLink":"https://storage.invalid/private"}
 
@@ -249,7 +258,7 @@ def run_fixture(prefix, desktop, executable, connect=False):
             failure.unlink(missing_ok=True)
             with tempfile.TemporaryDirectory(prefix="memoquick-ui-") as data:
                 result = subprocess.run([executable, "--smoke", server.base, "--data-dir", data, "--output", str(output)], timeout=45)
-                assert result.returncode == 0, failure.read_text("utf-8") if failure.exists() else "Native UI smoke test failed"
+                assert result.returncode == 0, (failure.read_text("utf-8") if failure.exists() else "Native UI smoke test failed", server.errors)
                 position_file = pathlib.Path(data) / "window.json"
                 expected = json.loads(position_file.read_text("utf-8"))
                 subprocess.run([executable, "--check-position", "--data-dir", data, "--output", str(output)], check=True, timeout=15)
@@ -260,9 +269,9 @@ def run_fixture(prefix, desktop, executable, connect=False):
                 restored = json.loads((output / "position.json").read_text())
                 assert restored["workLeft"] <= restored["x"] < restored["right"] <= restored["workRight"], "Restored window is horizontally offscreen"
                 assert restored["workTop"] <= restored["y"] < restored["bottom"] <= restored["workBottom"], "Restored window is vertically offscreen"
-            assert len(server.creates) == 4, "Desktop submission count incorrect"
+            assert len(server.creates) == 5, "Desktop submission count incorrect"
             assert server.refreshes == 2
-            assert len(server.files) == 2, "Desktop attachments were lost or duplicated"
+            assert len(server.files) == 4, "Desktop attachments were lost or duplicated"
             assert server.upload_failures == 1, "Partial upload failure was not exercised"
             print("Native desktop: login, encrypted draft, failure retention, refresh, close-on-success and show handler passed")
             print("Window position: drag persistence, hide/show, restart and offscreen recovery passed")

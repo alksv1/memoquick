@@ -1,4 +1,5 @@
 #include "window.hpp"
+#include "../tests/clipboard_fixture.hpp"
 #include <shellapi.h>
 #include <psapi.h>
 #include <objbase.h>
@@ -420,6 +421,42 @@ public:
             require(!IsWindowVisible(handle),window_.notice().c_str());
             require(window_.currentDraft() == mq::Draft{}, "Saving did not clear all compose metadata");
             require(store_.draft(mq::parseServer(server_).url,"users/7") == mq::Draft{}, "Saving left metadata in the stored draft");
+            // GIVEN a mixed clipboard batch, WHEN pasted directly, THEN a bad
+            // item leaves the draft intact and valid images upload without source files.
+            window_.show();
+            SetWindowTextW(GetDlgItem(handle,mq::Editor),L"剪贴板粘贴");
+            const auto end = GetWindowTextLengthW(GetDlgItem(handle,mq::Editor));
+            SendMessageW(GetDlgItem(handle,mq::Editor),EM_SETSEL,static_cast<WPARAM>(end),end);
+            const auto before = window_.currentDraft();
+            auto text = Microsoft::WRL::Make<mq::test::ClipboardData>(); text->add(CF_UNICODETEXT,std::string(16,'\0'));
+            require(!window_.pasteAttachments(*text.Get()), "Text clipboard did not fall through to native editing");
+            auto invalid = Microsoft::WRL::Make<mq::test::ClipboardData>(); invalid->files({{L"说明.pdf","%PDF-1.7"},{L"空.pdf",""}});
+            bool rejected = false;
+            try { window_.pasteAttachments(*invalid.Get()); } catch (const mq::Error&) { rejected = true; }
+            require(rejected && window_.currentDraft() == before, "A failed paste partially changed the draft");
+            BITMAPINFOHEADER info{}; info.biSize = sizeof(info); info.biWidth = 2; info.biHeight = 1; info.biPlanes = 1; info.biBitCount = 24;
+            std::string dib(reinterpret_cast<const char*>(&info),sizeof(info)); dib.append(8,'\x40');
+            auto bitmap = Microsoft::WRL::Make<mq::test::ClipboardData>(); bitmap->add(CF_DIB,std::move(dib));
+            const auto png = mq::clipboardAttachments(*bitmap.Get());
+            auto copied = Microsoft::WRL::Make<mq::test::ClipboardData>(); copied->files({{L"剪贴图.png",png[0].bytes},{L"说明.pdf","%PDF-1.7\nclipboard fixture"}});
+            stage_ = 91;
+            require(window_.pasteAttachments(*copied.Get()), "Clipboard attachments were not accepted");
+            const auto pasted = window_.currentDraft();
+            require(pasted.attachments.size() == 2 && pasted.content == before.content, "Paste lost text or attachment metadata");
+            require(pasted == store_.draft(mq::parseServer(server_).url,"users/7"), "Pasted bytes were not durably cached before upload");
+        } else if (stage_ == 91) {
+            const auto pasted = window_.currentDraft();
+            require(pasted.attachments.size() == 2 && pasted.attachments[0].name == "attachments/fixture-3"
+                && !pasted.attachments[0].inlineImage && pasted.attachments[1].name.empty(), window_.notice().c_str());
+            require(pasted.content.find("![剪贴图.png](/notes/file/attachments/fixture-3/image)") != std::string::npos, "Pasted image did not appear at the cursor");
+            SendMessageW(GetDlgItem(handle,mq::Editor),EM_UNDO,0,0);
+            require(window_.currentDraft().content == "剪贴板粘贴", "Pasted image could not be undone");
+            SendMessageW(GetDlgItem(handle,mq::Editor),EM_UNDO,0,0);
+            require(window_.currentDraft() == pasted, "Pasted image redo changed attachments");
+            screenshot(handle,output_ / L"clipboard-paste.bmp");
+            stage_ = 92; SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::SaveButton,BN_CLICKED),0);
+        } else if (stage_ == 92) {
+            require(!IsWindowVisible(handle) && window_.currentDraft() == mq::Draft{}, ("Pasted attachments did not save and clear: " + window_.notice()).c_str());
             stage_ = 10;
             KillTimer(handle, 777);
             DestroyWindow(handle);
@@ -442,7 +479,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
     InitCommonControlsEx(&controls);
-    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HRESULT com = OleInitialize(nullptr);
     int count = 0;
     auto arguments = CommandLineToArgvW(GetCommandLineW(), &count);
     bool background = false, smoke = false, checkPosition = false, checkSession = false;
@@ -472,7 +509,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                     PostMessageW(existing, mq::ShowMessage, 0, 0);
                 }
                 CloseHandle(mutex);
-                if (SUCCEEDED(com)) CoUninitialize();
+                if (SUCCEEDED(com)) OleUninitialize();
                 return 0;
             }
         }
@@ -522,6 +559,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         } else MessageBoxW(nullptr, mq::wide(error.what()).c_str(), L"MemoQuick 无法启动", MB_OK | MB_ICONERROR);
     }
     if (mutex) CloseHandle(mutex);
-    if (SUCCEEDED(com)) CoUninitialize();
+    if (SUCCEEDED(com)) OleUninitialize();
     return result;
 }

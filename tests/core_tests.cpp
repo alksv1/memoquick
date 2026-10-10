@@ -9,6 +9,8 @@
 #include <limits>
 #include <objbase.h>
 
+int clipboardTests();
+
 namespace {
 int checks = 0;
 void check(bool value, const char* message) { ++checks; if (!value) throw std::runtime_error(message); }
@@ -47,6 +49,7 @@ void markdownTests() {
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
 }
 void unitTests() {
+    checks += clipboardTests();
     // GIVEN provider responses and configurable URLs, WHEN validated, THEN malformed names and unsafe endpoints are rejected.
     check(mq::parseLocationName(R"({"display_name":" 中国，广东省，深圳市 "})") == "中国，广东省，深圳市", "Address name was not normalized");
     for (const auto body : {"{}", "[]", "not json", R"({"display_name":42})", R"({"display_name":"  "})"})

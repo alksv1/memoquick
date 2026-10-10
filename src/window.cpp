@@ -201,6 +201,11 @@ void Window::createControls() {
     add(ResumeButton, L"BUTTON", L"恢复登录", BS_OWNERDRAW | WS_TABSTOP);
     add(Editor, L"EDIT", L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL | WS_TABSTOP);
     SetWindowSubclass(control(Editor), [](HWND input, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) -> LRESULT {
+        if (message == WM_PASTE) {
+            const auto self = reinterpret_cast<Window*>(data);
+            try { if (self->pasteClipboard()) return 0; }
+            catch (const std::exception& error) { self->setNotice(error.what()); return 0; }
+        }
         if (message == WM_MOUSEWHEEL) {
             const auto self = reinterpret_cast<Window*>(data);
             self->wheelDelta_ += GET_WHEEL_DELTA_WPARAM(wparam);
@@ -674,6 +679,7 @@ bool Window::preprocess(MSG& msg) {
             const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             int command = 0;
             if (!shift) {
+                if (msg.wParam == 'V') { SendMessageW(control(Editor), WM_PASTE, 0, 0); return true; }
                 if (msg.wParam == 'B') command = MdBold;
                 if (msg.wParam == 'I') command = MdItalic;
                 if (msg.wParam == 'K') command = MdLink;
@@ -687,6 +693,11 @@ bool Window::preprocess(MSG& msg) {
                 if (msg.wParam == 'C') command = MdCodeBlock;
             }
             if (command) { markdown(static_cast<MarkdownAction>(command - MdBold)); return true; }
+        }
+        if (view_ == View::Compose && msg.hwnd == control(Editor) && !busy_ && !imeComposing(control(Editor))
+            && msg.wParam == VK_INSERT && (GetKeyState(VK_SHIFT) & 0x8000)
+            && !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000)) {
+            SendMessageW(control(Editor), WM_PASTE, 0, 0); return true;
         }
         if (msg.wParam == VK_ESCAPE && !imeComposing(GetFocus())) { hide(); return true; }
         if (msg.wParam == VK_RETURN && !busy_ && !imeComposing(GetFocus())) {

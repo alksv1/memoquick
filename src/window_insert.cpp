@@ -3,8 +3,51 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <wrl/client.h>
 
 namespace mq {
+bool Window::pasteClipboard() {
+    if (view_ != View::Compose || busy_ || !client_) return false;
+    Microsoft::WRL::ComPtr<IDataObject> source;
+    if (FAILED(OleGetClipboard(&source)) || !source) throw Error("剪贴板暂时无法读取，请重试粘贴。", ErrorKind::Validation);
+    return pasteAttachments(*source.Get());
+}
+bool Window::pasteAttachments(IDataObject& source) {
+    if (view_ != View::Compose || busy_ || !client_) return false;
+    const auto server = config_.server, user = user_.name;
+    setBusy(true);
+    std::vector<ClipboardAttachment> items;
+    try { items = clipboardAttachments(source); }
+    catch (...) { setBusy(false); throw; }
+    setBusy(false);
+    if (items.empty()) return false;
+    // Delayed OLE providers can dispatch messages while supplying their bytes.
+    if (busy_ || view_ != View::Compose || config_.server != server || user_.name != user)
+        throw Error("粘贴已取消，请回到笔记后重试。", ErrorKind::Validation);
+    auto draft = currentDraft();
+    if (items.size() > 32 - draft.attachments.size()) throw Error("每条记录最多添加 32 个附件。", ErrorKind::Validation);
+    std::vector<std::string> cached;
+    cached.reserve(items.size()); draft.attachments.reserve(draft.attachments.size() + items.size());
+    bool images = false;
+    try {
+        for (auto& item : items) {
+            auto id = store_.cacheAttachment(server, user, item.bytes);
+            cached.push_back(std::move(id));
+            const bool image = item.type.starts_with("image/"); images = images || image;
+            draft.attachments.push_back({{}, std::move(item.filename), std::move(item.type), cached.back(), image});
+        }
+        // Commit the complete batch before starting any upload. A failed read or
+        // local write leaves the existing draft and source clipboard untouched.
+        store_.saveDraft(server, user, draft);
+    } catch (...) {
+        for (const auto& id : cached) store_.removeAttachment(id);
+        throw;
+    }
+    extras_ = std::move(draft); draftDirty_ = false; updateMetadata(); setNotice("");
+    if (images) uploadPending(true);
+    else SetFocus(control(Editor));
+    return true;
+}
 void Window::insertMenu() {
     if (busy_ || view_ != View::Compose) return;
     const auto menu = CreatePopupMenu();
