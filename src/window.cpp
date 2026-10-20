@@ -59,9 +59,15 @@ HWND Window::create(HINSTANCE instance, bool background) {
     const auto systemDpi = GetDpiForSystem();
     RECT bounds{0, 0, scaled(420, systemDpi), scaled(280, systemDpi)};
     const auto position = store_.windowPosition();
+    int width = bounds.right - bounds.left;
+    int height = bounds.bottom - bounds.top;
+    if (position && position->width > 0 && position->height > 0) {
+        width = position->width;
+        height = position->height;
+    }
     handle_ = CreateWindowExW(0, WindowClass, L"MemoQuick", WindowStyle,
         position ? position->x : CW_USEDEFAULT, position ? position->y : CW_USEDEFAULT,
-        bounds.right - bounds.left, bounds.bottom - bounds.top,
+        width, height,
         nullptr, nullptr, instance, this);
     if (!handle_) throw Error("无法创建窗口。", ErrorKind::Storage);
     // Apply the full-client frame before the first show, including a fresh startup.
@@ -98,16 +104,29 @@ void Window::ensurePositionVisible() {
     MONITORINFO monitor{sizeof(monitor)};
     if (!GetMonitorInfoW(MonitorFromRect(&bounds, MONITOR_DEFAULTTONEAREST), &monitor)) return;
     const auto& work = monitor.rcWork;
-    const LONG x = std::clamp(bounds.left, work.left, std::max(work.left, work.right - (bounds.right - bounds.left)));
-    const LONG y = std::clamp(bounds.top, work.top, std::max(work.top, work.bottom - (bounds.bottom - bounds.top)));
-    if (x != bounds.left || y != bounds.top)
-        SetWindowPos(handle_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    const int workW = static_cast<int>(work.right - work.left);
+    const int workH = static_cast<int>(work.bottom - work.top);
+    const int minW = std::min(scaled(340, dpi_), workW);
+    const int minH = std::min(scaled(240, dpi_), workH);
+    const int curW = bounds.right - bounds.left;
+    const int curH = bounds.bottom - bounds.top;
+    const int w = std::clamp(curW, minW, std::max(minW, workW));
+    const int h = std::clamp(curH, minH, std::max(minH, workH));
+    const LONG x = std::clamp(bounds.left, work.left, std::max(work.left, work.right - w));
+    const LONG y = std::clamp(bounds.top, work.top, std::max(work.top, work.bottom - h));
+    if (x != bounds.left || y != bounds.top || w != curW || h != curH) {
+        UINT flags = SWP_NOZORDER | SWP_NOACTIVATE;
+        if (w == curW && h == curH) flags |= SWP_NOSIZE;
+        if (x == bounds.left && y == bounds.top) flags |= SWP_NOMOVE;
+        SetWindowPos(handle_, nullptr, x, y, w, h, flags);
+    }
 }
 void Window::rememberPosition() {
     KillTimer(handle_, PositionTimer);
     if (!positionReady_ || IsIconic(handle_) || IsZoomed(handle_)) return;
     RECT bounds{};
-    if (GetWindowRect(handle_, &bounds)) store_.saveWindowPosition({bounds.left, bounds.top});
+    if (GetWindowRect(handle_, &bounds))
+        store_.saveWindowPosition({bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top});
 }
 bool Window::flushDraft() {
     KillTimer(handle_, DraftTimer);
@@ -729,7 +748,10 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
     if (taskbarCreated_ && msg == taskbarCreated_) { trayIcon(handle_, instance_, NIM_ADD); return 0; }
     switch (msg) {
     case WM_CREATE: createControls(); return 0;
-    case WM_SIZE: layout(); return 0;
+    case WM_SIZE:
+        layout();
+        if (positionReady_ && !IsIconic(handle_) && !IsZoomed(handle_)) SetTimer(handle_, PositionTimer, 300, nullptr);
+        return 0;
     case WM_MOVE:
         if (positionReady_ && !IsIconic(handle_) && !IsZoomed(handle_)) SetTimer(handle_, PositionTimer, 300, nullptr);
         break;

@@ -169,14 +169,14 @@ void unitTests() {
     {
         mq::Store store(directory);
         check(!store.windowPosition(), "New installation already has a window position");
-        store.saveWindowPosition({-640, 240});
+        store.saveWindowPosition({-640, 240, 520, 360});
         store.saveConfig(config); store.saveCookies(server.url, cookies);
         store.saveDraft(server.url, "users/alice", draft);
     }
     {
         mq::Store store(directory);
         check(store.config() == config, "Settings did not persist");
-        check(store.windowPosition() == mq::WindowPosition{-640, 240}, "Negative monitor coordinates did not persist");
+        check(store.windowPosition() == mq::WindowPosition{-640, 240, 520, 360}, "Negative monitor coordinates did not persist");
         check(store.cookies(server.url) == cookies, "Session did not persist");
         check(store.draft(server.url, "users/alice") == draft, "Draft did not persist");
         check(store.draft(server.url, "users/bob") == mq::Draft{}, "Draft crossed account");
@@ -232,7 +232,13 @@ void unitTests() {
     }
     {
         mq::Store store(directory); check(!store.config().dark && store.config().geocodingEndpoint.empty(), "Theme or disabled geocoding did not persist");
-        check(store.windowPosition() == mq::WindowPosition{-640, 240}, "Settings update lost window position");
+        check(store.windowPosition() == mq::WindowPosition{-640, 240, 520, 360}, "Settings update lost window position");
+    }
+    // GIVEN legacy window.json with only x and y, WHEN loaded, THEN width and height default to 0.
+    {
+        std::ofstream(directory / L"window.json") << "{\"x\": 150, \"y\": 220}";
+        mq::Store store(directory);
+        check(store.windowPosition() == mq::WindowPosition{150, 220, 0, 0}, "Legacy window.json migration failed");
     }
     // GIVEN corrupted storage, WHEN opened, THEN the original bytes are kept.
     { std::ofstream(directory / L"settings.json") << "{corrupted"; }
