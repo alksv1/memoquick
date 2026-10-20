@@ -264,6 +264,11 @@ def run_fixture(prefix, desktop, executable, connect=False):
                 subprocess.run([executable, "--check-position", "--data-dir", data, "--output", str(output)], check=True, timeout=15)
                 restored = json.loads((output / "position.json").read_text())
                 assert (restored["x"], restored["y"]) == (expected["x"], expected["y"]), "Restart lost window position"
+                assert (restored["width"], restored["height"]) == (expected["width"], expected["height"]), "Restart lost window dimensions"
+                position_file.write_text(json.dumps({"x": 100, "y": 150, "width": 500, "height": 350}), "utf-8")
+                subprocess.run([executable, "--check-position", "--data-dir", data, "--output", str(output)], check=True, timeout=15)
+                restored = json.loads((output / "position.json").read_text())
+                assert (restored["x"], restored["y"], restored["width"], restored["height"]) == (100, 150, 500, 350), "Custom size did not restore"
                 position_file.write_text(json.dumps({"x": -500000, "y": 500000}), "utf-8")
                 subprocess.run([executable, "--check-position", "--data-dir", data, "--output", str(output)], check=True, timeout=15)
                 restored = json.loads((output / "position.json").read_text())

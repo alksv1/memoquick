@@ -6,6 +6,7 @@
 namespace mq {
 struct WindowPosition {
     int x = 0, y = 0;
+    int width = 0, height = 0;
     bool operator==(const WindowPosition&) const = default;
 };
 class Store {

@@ -185,7 +185,7 @@ public:
         SetWindowPos(window_.handle(), nullptr, monitor.rcWork.left + 20, monitor.rcWork.top + 20, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         SendMessageW(window_.handle(), WM_EXITSIZEMOVE, 0, 0);
         RECT moved{}; GetWindowRect(window_.handle(), &moved);
-        require(store_.windowPosition() == mq::WindowPosition{moved.left, moved.top}, "Drag end did not save position");
+        require(store_.windowPosition() == mq::WindowPosition{moved.left, moved.top, moved.right - moved.left, moved.bottom - moved.top}, "Drag end did not save position");
         SendMessageW(window_.handle(), WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
         screenshot(window_.handle(), output_ / L"login-dark.bmp");
         verifyMenu(window_, 0, true, false, output_ / L"tray-menu-dark.bmp");
@@ -523,6 +523,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             require(GetMonitorInfoW(MonitorFromWindow(window.handle(), MONITOR_DEFAULTTONEAREST), &monitor) != FALSE, "Monitor lookup failed");
             std::ofstream report(output / L"position.json");
             report << "{\"x\":" << bounds.left << ",\"y\":" << bounds.top
+                << ",\"width\":" << (bounds.right - bounds.left) << ",\"height\":" << (bounds.bottom - bounds.top)
                 << ",\"right\":" << bounds.right << ",\"bottom\":" << bounds.bottom
                 << ",\"workLeft\":" << monitor.rcWork.left << ",\"workTop\":" << monitor.rcWork.top
                 << ",\"workRight\":" << monitor.rcWork.right << ",\"workBottom\":" << monitor.rcWork.bottom << '}';

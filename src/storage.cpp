@@ -85,7 +85,12 @@ Store::Store(std::filesystem::path directory) : impl_(std::make_unique<Impl>()) 
         const auto windowPath = impl_->directory / L"window.json";
         if (std::filesystem::exists(windowPath)) {
             const auto value = Json::parse(readFile(windowPath));
-            impl_->windowPosition = WindowPosition{value.at("x").get<int>(), value.at("y").get<int>()};
+            impl_->windowPosition = WindowPosition{
+                value.at("x").get<int>(),
+                value.at("y").get<int>(),
+                value.value("width", 0),
+                value.value("height", 0)
+            };
         }
         const auto configPath = impl_->directory / L"settings.json";
         if (std::filesystem::exists(configPath)) {
@@ -115,7 +120,12 @@ std::optional<WindowPosition> Store::windowPosition() const {
 void Store::saveWindowPosition(WindowPosition position) {
     std::lock_guard lock(impl_->mutex);
     if (impl_->windowPosition == position) return;
-    const auto plain = Json{{"x", position.x}, {"y", position.y}}.dump(2);
+    Json value = {{"x", position.x}, {"y", position.y}};
+    if (position.width > 0 && position.height > 0) {
+        value["width"] = position.width;
+        value["height"] = position.height;
+    }
+    const auto plain = value.dump(2);
     atomicWrite(impl_->directory / L"window.json", {plain.begin(), plain.end()});
     impl_->windowPosition = position;
 }
