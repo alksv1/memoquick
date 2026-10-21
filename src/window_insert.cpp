@@ -9,7 +9,7 @@ namespace mq {
 bool Window::pasteClipboard() {
     if (view_ != View::Compose || busy_ || !client_) return false;
     Microsoft::WRL::ComPtr<IDataObject> source;
-    if (FAILED(OleGetClipboard(&source)) || !source) throw Error("剪贴板暂时无法读取，请重试粘贴。", ErrorKind::Validation);
+    if (FAILED(OleGetClipboard(&source)) || !source) throw Error(i18n::tr("error.clipboard_temp_unavail"), ErrorKind::Validation);
     return pasteAttachments(*source.Get());
 }
 bool Window::pasteAttachments(IDataObject& source) {
@@ -23,9 +23,9 @@ bool Window::pasteAttachments(IDataObject& source) {
     if (items.empty()) return false;
     // Delayed OLE providers can dispatch messages while supplying their bytes.
     if (busy_ || view_ != View::Compose || config_.server != server || user_.name != user)
-        throw Error("粘贴已取消，请回到笔记后重试。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.paste_cancelled"), ErrorKind::Validation);
     auto draft = currentDraft();
-    if (items.size() > 32 - draft.attachments.size()) throw Error("每条记录最多添加 32 个附件。", ErrorKind::Validation);
+    if (items.size() > 32 - draft.attachments.size()) throw Error(i18n::tr("error.max_32_attachments"), ErrorKind::Validation);
     std::vector<std::string> cached;
     cached.reserve(items.size()); draft.attachments.reserve(draft.attachments.size() + items.size());
     bool images = false;
@@ -51,11 +51,11 @@ bool Window::pasteAttachments(IDataObject& source) {
 void Window::insertMenu() {
     if (busy_ || view_ != View::Compose) return;
     const auto menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, InsertAttachment, L"添加附件");
-    AppendMenuW(menu, MF_STRING, InsertImage, L"插入图片");
-    AppendMenuW(menu, MF_STRING, InsertAudio, L"录音");
-    AppendMenuW(menu, MF_STRING, InsertMemo, L"关联 Memo");
-    AppendMenuW(menu, MF_STRING, InsertLocation, L"添加位置");
+    AppendMenuW(menu, MF_STRING, InsertAttachment, i18n::trW("insert.attachment").c_str());
+    AppendMenuW(menu, MF_STRING, InsertImage, i18n::trW("insert.image").c_str());
+    AppendMenuW(menu, MF_STRING, InsertAudio, i18n::trW("insert.audio").c_str());
+    AppendMenuW(menu, MF_STRING, InsertMemo, i18n::trW("insert.memo").c_str());
+    AppendMenuW(menu, MF_STRING, InsertLocation, i18n::trW("insert.location").c_str());
     RECT rect{}; GetWindowRect(control(AddButton), &rect);
     const auto command = trackMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top);
     if (command) SendMessageW(handle_, WM_COMMAND, MAKEWPARAM(command, BN_CLICKED), 0);
@@ -64,10 +64,28 @@ void Window::chooseFiles(bool image) {
     std::vector<wchar_t> names(65536);
     OPENFILENAMEW chooser{}; chooser.lStructSize = sizeof(chooser); chooser.hwndOwner = handle_;
     chooser.lpstrFile = names.data(); chooser.nMaxFile = static_cast<DWORD>(names.size());
-    chooser.lpstrFilter = image ? L"图片\0*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.svg;*.avif;*.heic\0所有文件\0*.*\0" : L"所有文件\0*.*\0";
+    std::vector<wchar_t> filter;
+    if (image) {
+        const auto imgLabel = i18n::trW("dialog.images");
+        const auto allLabel = i18n::trW("dialog.all_files");
+        const wchar_t imgExt[] = L"*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.svg;*.avif;*.heic";
+        const wchar_t allExt[] = L"*.*";
+        filter.insert(filter.end(), imgLabel.begin(), imgLabel.end()); filter.push_back(L'\0');
+        filter.insert(filter.end(), imgExt, imgExt + wcslen(imgExt)); filter.push_back(L'\0');
+        filter.insert(filter.end(), allLabel.begin(), allLabel.end()); filter.push_back(L'\0');
+        filter.insert(filter.end(), allExt, allExt + wcslen(allExt)); filter.push_back(L'\0');
+        filter.push_back(L'\0');
+    } else {
+        const auto allLabel = i18n::trW("dialog.all_files");
+        const wchar_t allExt[] = L"*.*";
+        filter.insert(filter.end(), allLabel.begin(), allLabel.end()); filter.push_back(L'\0');
+        filter.insert(filter.end(), allExt, allExt + wcslen(allExt)); filter.push_back(L'\0');
+        filter.push_back(L'\0');
+    }
+    chooser.lpstrFilter = filter.data();
     chooser.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&chooser)) {
-        if (CommDlgExtendedError()) throw Error("无法选择文件。", ErrorKind::Storage);
+        if (CommDlgExtendedError()) throw Error(i18n::tr("error.choose_file_failed"), ErrorKind::Storage);
         return;
     }
     std::vector<std::filesystem::path> paths;
@@ -77,27 +95,27 @@ void Window::chooseFiles(bool image) {
     else while (*next) { paths.push_back(first / next); next += wcslen(next) + 1; }
     for (const auto& path : paths) {
         const auto type = fileMime(path);
-        if (image && !type.starts_with("image/")) throw Error("请选择图片文件。", ErrorKind::Validation);
+        if (image && !type.starts_with("image/")) throw Error(i18n::tr("error.choose_image_only"), ErrorKind::Validation);
         std::ifstream file(path, std::ios::binary | std::ios::ate);
-        if (!file) throw Error("无法打开附件。", ErrorKind::Storage);
+        if (!file) throw Error(i18n::tr("error.open_attach_failed"), ErrorKind::Storage);
         const auto size = file.tellg();
-        if (size <= 0 || size > static_cast<std::streamoff>(AttachmentSizeMax)) throw Error("附件需非空且不超过 20 MiB。", ErrorKind::Validation);
+        if (size <= 0 || size > static_cast<std::streamoff>(AttachmentSizeMax)) throw Error(i18n::tr("error.attachment_size_limit"), ErrorKind::Validation);
         std::string bytes(static_cast<size_t>(size), '\0'); file.seekg(0);
-        if (!file.read(bytes.data(), size)) throw Error("无法完整读取附件。", ErrorKind::Storage);
+        if (!file.read(bytes.data(), size)) throw Error(i18n::tr("error.read_attach_failed"), ErrorKind::Storage);
         cacheAttachment(utf8(path.filename().wstring()), type, bytes, image);
     }
     if (image) uploadPending(true);
     else SetFocus(control(Editor));
 }
 void Window::cacheAttachment(const std::string& filename, const std::string& type, const std::string& bytes, bool image) {
-    if (extras_.attachments.size() >= 32) throw Error("每条记录最多添加 32 个附件。", ErrorKind::Validation);
+    if (extras_.attachments.size() >= 32) throw Error(i18n::tr("error.max_32_attachments"), ErrorKind::Validation);
     const auto id = store_.cacheAttachment(config_.server, user_.name, bytes);
     extras_.attachments.push_back({{}, filename, type, id, image});
     draftDirty_ = true;
     updateMetadata();
     if (!flushDraft()) {
         extras_.attachments.pop_back(); store_.removeAttachment(id); updateMetadata();
-        throw Error("附件未能加入草稿，请检查磁盘后重试。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.draft_attach_failed"), ErrorKind::Storage);
     }
 }
 void Window::prepareAttachments(Draft& draft, size_t cursor, bool imagesOnly) {
@@ -132,9 +150,17 @@ void Window::uploadPending(bool imagesOnly) {
 }
 void Window::updateMetadata() {
     std::wstring caption;
-    if (!extras_.attachments.empty()) caption = std::to_wstring(extras_.attachments.size()) + L" 附件";
-    if (!extras_.relations.empty()) caption += (caption.empty() ? L"" : L" · ") + std::to_wstring(extras_.relations.size()) + L" 关联";
-    if (extras_.location) caption += (caption.empty() ? L"" : L" · ") + std::wstring(L"位置");
+    if (!extras_.attachments.empty()) {
+        const auto n = extras_.attachments.size();
+        const auto key = n == 1 ? "metadata.attachment_singular" : "metadata.attachments";
+        caption = i18n::trFormatW(key, std::to_wstring(n));
+    }
+    if (!extras_.relations.empty()) {
+        const auto n = extras_.relations.size();
+        const auto key = n == 1 ? "metadata.relation_singular" : "metadata.relations";
+        caption += (caption.empty() ? L"" : L" · ") + i18n::trFormatW(key, std::to_wstring(n));
+    }
+    if (extras_.location) caption += (caption.empty() ? L"" : L" · ") + i18n::trW("metadata.location");
     text(MetadataButton, caption);
     EnableWindow(control(MetadataButton), !busy_ && !caption.empty());
 }
@@ -146,17 +172,17 @@ void Window::metadataMenu() {
         return label.substr(0, 80);
     };
     if (std::any_of(extras_.attachments.begin(), extras_.attachments.end(), [](const auto& a) { return a.name.empty() || a.inlineImage; }))
-        AppendMenuW(menu, MF_STRING, RetryAttachments, L"重试上传");
+        AppendMenuW(menu, MF_STRING, RetryAttachments, i18n::trW("metadata.retry_upload").c_str());
     for (size_t i = 0; i < extras_.attachments.size(); ++i) {
         const auto& a = extras_.attachments[i];
-        const auto label = L"移除 " + safeLabel(a.filename) + (a.name.empty() ? L"（待上传）" : L"");
+        const auto label = i18n::trW("metadata.remove_prefix") + safeLabel(a.filename) + (a.name.empty() ? i18n::trW("metadata.pending") : L"");
         AppendMenuW(menu, MF_STRING, 2000 + i, label.c_str());
     }
     for (size_t i = 0; i < extras_.relations.size(); ++i)
-        AppendMenuW(menu, MF_STRING, 3000 + i, (L"取消关联 " + safeLabel(extras_.relations[i].snippet)).c_str());
+        AppendMenuW(menu, MF_STRING, 3000 + i, (i18n::trW("metadata.unlink_prefix") + safeLabel(extras_.relations[i].snippet)).c_str());
     if (extras_.location) {
-        AppendMenuW(menu, MF_STRING, InsertLocation, (L"编辑位置 " + safeLabel(extras_.location->placeholder)).c_str());
-        AppendMenuW(menu, MF_STRING, 4000, L"移除位置");
+        AppendMenuW(menu, MF_STRING, InsertLocation, (i18n::trW("metadata.edit_location_prefix") + safeLabel(extras_.location->placeholder)).c_str());
+        AppendMenuW(menu, MF_STRING, 4000, i18n::trW("metadata.remove_location").c_str());
     }
     RECT rect{}; GetWindowRect(control(MetadataButton), &rect);
     const auto command = trackMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top);
@@ -197,7 +223,7 @@ void Window::confirmPanel() {
         if (index == LB_ERR || static_cast<size_t>(index) >= memoPage_.memos.size()) return;
         const auto& memo = memoPage_.memos[static_cast<size_t>(index)];
         if (std::none_of(extras_.relations.begin(), extras_.relations.end(), [&](const auto& r) { return r.name == memo.name; })) {
-            if (extras_.relations.size() >= 32) throw Error("每条记录最多关联 32 条 Memo。", ErrorKind::Validation);
+            if (extras_.relations.size() >= 32) throw Error(i18n::tr("error.max_32_memos"), ErrorKind::Validation);
             extras_.relations.push_back(memo);
         }
     } else if (view_ == View::Location) {
@@ -212,7 +238,7 @@ void Window::stopLocation() {
     locationReader_.cancel();
     locationNames_.cancel();
     locationNameReplaceable_ = false;
-    text(LocateButton, L"当前位置");
+    text(LocateButton, i18n::trW("location.current"));
     for (const auto id : {LatitudeInput, LongitudeInput, PanelConfirm}) EnableWindow(control(id), !busy_);
 }
 void Window::locate() {
@@ -221,9 +247,9 @@ void Window::locate() {
     setNotice(""); ShowWindow(control(LocationSettingsButton), SW_HIDE);
     try {
         locationReader_.start();
-        text(LocateButton, L"取消定位");
+        text(LocateButton, i18n::trW("location.cancel_locating"));
         for (const auto id : {LatitudeInput, LongitudeInput, PanelConfirm}) EnableWindow(control(id), FALSE);
-        if (!SetTimer(handle_, 6, 100, nullptr)) throw Error("无法开始定位，请重试。", ErrorKind::Validation);
+        if (!SetTimer(handle_, 6, 100, nullptr)) throw Error(i18n::tr("error.location_unavailable"), ErrorKind::Validation);
     } catch (const Error& error) {
         stopLocation(); setNotice(error.what());
         if (error.kind == ErrorKind::LocationDenied) ShowWindow(control(LocationSettingsButton), SW_SHOW);
@@ -236,13 +262,13 @@ void Window::locationTick() {
             fillLocation(*fix);
             if (!config_.geocodingEndpoint.empty() && locationNameReplaceable_) {
                 locationNames_.start(config_.geocodingEndpoint, fix->latitude, fix->longitude);
-                text(LocateButton, L"取消查询");
-                if (!SetTimer(handle_, 6, 100, nullptr)) throw Error("地名查询未能开始，坐标已保留。", ErrorKind::Validation);
+                text(LocateButton, i18n::trW("location.cancel_lookup"));
+                if (!SetTimer(handle_, 6, 100, nullptr)) throw Error(i18n::tr("error.geocoding_failed"), ErrorKind::Validation);
             }
         }
         if (const auto name = locationNames_.poll()) {
             fillLocationName(*name);
-            KillTimer(handle_, 6); text(LocateButton, L"当前位置");
+            KillTimer(handle_, 6); text(LocateButton, i18n::trW("location.current"));
         }
     } catch (const Error& error) {
         stopLocation(); setNotice(error.what());
@@ -251,22 +277,23 @@ void Window::locationTick() {
 }
 void Window::fillLocation(const LocationFix& fix) {
     if (view_ != View::Location) return;
-    if (!validLocation({"当前位置", fix.latitude, fix.longitude}) || !std::isfinite(fix.accuracy) || fix.accuracy < 0)
-        throw Error("Windows 返回了无效位置，可重试或手动填写。", ErrorKind::Validation);
+    if (!validLocation({"location", fix.latitude, fix.longitude}) || !std::isfinite(fix.accuracy) || fix.accuracy < 0)
+        throw Error(i18n::tr("error.location_bad_os_return"), ErrorKind::Validation);
     const auto latitude = coordinateText(fix.latitude, CoordinateFormat::Rounded);
     const auto longitude = coordinateText(fix.longitude, CoordinateFormat::Rounded);
     const auto name = text(LocationName);
+    const auto defaultName = i18n::trW("location.current");
     const bool replaceable = trim(utf8(name)).empty() || (!locationAutomaticName_.empty() && name == locationAutomaticName_);
     stopLocation();
-    if (replaceable) { text(LocationName, L"当前位置"); locationAutomaticName_ = L"当前位置"; }
+    if (replaceable) { text(LocationName, defaultName); locationAutomaticName_ = defaultName; }
     text(LatitudeInput, latitude); text(LongitudeInput, longitude);
     locationNameBaseline_ = text(LocationName);
     locationLatitudeBaseline_ = latitude; locationLongitudeBaseline_ = longitude;
     locationNameReplaceable_ = replaceable; locationNameEdited_ = false;
-    if (fix.isDefault) setNotice("Windows 默认位置，请核对。");
+    if (fix.isDefault) setNotice(i18n::tr("location.default_pos"));
     else {
         const auto metres = static_cast<long long>(std::clamp(std::ceil(fix.accuracy), 1.0, 40075000.0));
-        setNotice("精度约 " + std::to_string(metres) + " 米", true);
+        setNotice(i18n::trFormat("location.accuracy", std::to_string(metres)), true);
     }
     SetFocus(control(LocationName));
 }
@@ -284,7 +311,7 @@ void Window::record() {
     PlaySoundW(nullptr, nullptr, 0); recording_.clear();
     recorder_.start();
     SetTimer(handle_, 3, 100, nullptr);
-    text(RecordButton, L"停止"); text(RecordTime, L"● 00:00");
+    text(RecordButton, i18n::trW("record.stop")); text(RecordTime, L"● 00:00");
     EnableWindow(control(PreviewButton), FALSE);
 }
 void Window::recordTick() {
@@ -303,13 +330,14 @@ void Window::recordTick() {
 void Window::finishRecording(bool attach) {
     KillTimer(handle_, 3);
     if (recorder_.active()) {
-        text(RecordButton, L"重新录制");
+        text(RecordButton, i18n::trW("record.again"));
         recording_ = recorder_.finish();
-        text(RecordButton, L"重新录制"); text(RecordTime, L"已录制 " + std::to_wstring((recording_.size() - 44) / 32000) + L" 秒");
+        text(RecordButton, i18n::trW("record.again"));
+        text(RecordTime, i18n::trFormatW("record.duration", std::to_wstring((recording_.size() - 44) / 32000)));
         EnableWindow(control(PreviewButton), TRUE);
     }
     if (!attach) return;
-    if (recording_.empty()) throw Error("先录一段，再添加。", ErrorKind::Validation);
+    if (recording_.empty()) throw Error(i18n::tr("record.need_record"), ErrorKind::Validation);
     PlaySoundW(nullptr, nullptr, 0);
     SYSTEMTIME now{}; GetLocalTime(&now);
     wchar_t name[80]{};

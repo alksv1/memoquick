@@ -20,7 +20,8 @@ bool trayIcon(HWND window, HINSTANCE instance, DWORD operation) {
     icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     icon.uCallbackMessage = TrayMessage;
     icon.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
-    wcscpy_s(icon.szTip, L"MemoQuick · 随手记下");
+    const auto tip = i18n::trW("tray.tip");
+    wcsncpy_s(icon.szTip, tip.c_str(), _TRUNCATE);
     const bool succeeded = Shell_NotifyIconW(operation, &icon) != FALSE;
     if (operation == NIM_ADD) {
         if (succeeded) KillTimer(window, TrayTimer);
@@ -37,7 +38,8 @@ bool imeComposing(HWND control) {
 }
 } // namespace
 
-Window::Window(Store& store, bool smoke) : store_(store), config_(store.config()), smoke_(smoke) {
+Window::Window(Store& store, bool smoke) : store_(store), config_(store.config()), smoke_(smoke), pendingLanguage_(store.config().language) {
+    i18n::setLanguage(config_.language);
     background_ = CreateSolidBrush(palette(config_.dark).background);
     inputBackground_ = CreateSolidBrush(palette(config_.dark).background);
 }
@@ -55,7 +57,7 @@ HWND Window::create(HINSTANCE instance, bool background) {
     klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     klass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
     klass.hIconSm = klass.hIcon;
-    if (!RegisterClassExW(&klass)) throw Error("无法注册窗口。", ErrorKind::Storage);
+    if (!RegisterClassExW(&klass)) throw Error(i18n::tr("error.register_window"), ErrorKind::Storage);
     const auto systemDpi = GetDpiForSystem();
     RECT bounds{0, 0, scaled(420, systemDpi), scaled(280, systemDpi)};
     const auto position = store_.windowPosition();
@@ -69,7 +71,7 @@ HWND Window::create(HINSTANCE instance, bool background) {
         position ? position->x : CW_USEDEFAULT, position ? position->y : CW_USEDEFAULT,
         width, height,
         nullptr, nullptr, instance, this);
-    if (!handle_) throw Error("无法创建窗口。", ErrorKind::Storage);
+    if (!handle_) throw Error(i18n::tr("error.create_window"), ErrorKind::Storage);
     // Apply the full-client frame before the first show, including a fresh startup.
     const DWMNCRENDERINGPOLICY policy = DWMNCRP_DISABLED;
     DwmSetWindowAttribute(handle_, DWMWA_NCRENDERING_POLICY, &policy, sizeof(policy));
@@ -80,7 +82,7 @@ HWND Window::create(HINSTANCE instance, bool background) {
     taskbarCreated_ = RegisterWindowMessageW(L"TaskbarCreated");
     trayIcon(handle_, instance_, NIM_ADD);
     hotkeyRegistered_ = smoke_ || registerHotkey(config_.modifiers, config_.key);
-    if (!hotkeyRegistered_) setNotice("快捷键已被占用，请在设置中换一个组合。");
+    if (!hotkeyRegistered_) setNotice(i18n::tr("notice.hotkey_taken"));
     // A manual launch after moving/upgrading the portable executable repairs its Run path.
     // Do not rewrite Run while Windows is executing the background startup entry.
     if (!smoke_ && !background && config_.startAtLogin) {
@@ -190,9 +192,10 @@ void Window::markdown(MarkdownAction action) {
     DWORD start = 0, end = 0;
     SendMessageW(control(Editor), EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
     const auto content = text(Editor);
-    const auto edit = formatMarkdown(content, start, end, action);
+    const auto edit = formatMarkdown(content, start, end, action,
+        i18n::trW("markdown.placeholder.text"), i18n::trW("markdown.placeholder.code"));
     if (content.size() - (edit.end - edit.start) + edit.replacement.size() > 500000)
-        throw Error("内容已达到长度上限。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.content_length_limit"), ErrorKind::Validation);
     SendMessageW(control(Editor), EM_SETSEL, edit.start, static_cast<LPARAM>(edit.end));
     SendMessageW(control(Editor), EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(edit.replacement.c_str()));
     SendMessageW(control(Editor), EM_SETSEL, edit.selectionStart, static_cast<LPARAM>(edit.selectionEnd));
@@ -203,21 +206,21 @@ void Window::createControls() {
     const auto add = [&](int id, const wchar_t* klass, const wchar_t* textValue, DWORD style = 0, DWORD extended = 0) {
         const auto child = CreateWindowExW(extended, klass, textValue, WS_CHILD | style, 0, 0, 0, 0,
             handle_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
-        if (!child) throw Error("无法创建输入控件。", ErrorKind::Storage);
+        if (!child) throw Error(i18n::tr("error.create_controls"), ErrorKind::Storage);
         controls_[id] = child;
     };
-    add(Heading, L"STATIC", L"MemoQuick");
-    add(ThemeButton, L"BUTTON", L"Light", BS_OWNERDRAW | WS_TABSTOP);
+    add(Heading, L"STATIC", i18n::trW("app.name").c_str());
+    add(ThemeButton, L"BUTTON", config_.dark ? L"Dark" : L"Light", BS_OWNERDRAW | WS_TABSTOP);
     add(CloseButton, L"BUTTON", L"×", BS_OWNERDRAW | WS_TABSTOP);
     add(SettingsButton, L"BUTTON", L"···", BS_OWNERDRAW | WS_TABSTOP);
-    add(ServerLabel, L"STATIC", L"服务地址");
+    add(ServerLabel, L"STATIC", i18n::trW("login.server").c_str());
     add(ServerInput, L"EDIT", wide(config_.server).c_str(), ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
-    add(UsernameLabel, L"STATIC", L"用户名");
+    add(UsernameLabel, L"STATIC", i18n::trW("login.username").c_str());
     add(UsernameInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
-    add(PasswordLabel, L"STATIC", L"密码");
+    add(PasswordLabel, L"STATIC", i18n::trW("login.password").c_str());
     add(PasswordInput, L"EDIT", L"", ES_AUTOHSCROLL | ES_PASSWORD | WS_TABSTOP | WS_BORDER);
-    add(LoginButton, L"BUTTON", L"登录", BS_OWNERDRAW | WS_TABSTOP);
-    add(ResumeButton, L"BUTTON", L"恢复登录", BS_OWNERDRAW | WS_TABSTOP);
+    add(LoginButton, L"BUTTON", i18n::trW("login.signin").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(ResumeButton, L"BUTTON", i18n::trW("login.resume").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(Editor, L"EDIT", L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL | WS_TABSTOP);
     SetWindowSubclass(control(Editor), [](HWND input, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) -> LRESULT {
         if (message == WM_PASTE) {
@@ -239,12 +242,12 @@ void Window::createControls() {
         return DefSubclassProc(input, message, wparam, lparam);
     }, 1, reinterpret_cast<DWORD_PTR>(this));
     SendMessageW(control(Editor), EM_SETLIMITTEXT, 500000, 0);
-    add(Visibility, L"BUTTON", L"仅自己 ▾", BS_OWNERDRAW | WS_TABSTOP);
-    add(SaveButton, L"BUTTON", L"保存", BS_OWNERDRAW | WS_TABSTOP);
+    add(Visibility, L"BUTTON", (i18n::trW("compose.visibility.private") + L" ▾").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(SaveButton, L"BUTTON", i18n::trW("compose.save").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(AccountLabel, L"STATIC", L"", SS_PATHELLIPSIS);
-    add(BrowserButton, L"BUTTON", L"打开 Memos", BS_OWNERDRAW | WS_TABSTOP);
+    add(BrowserButton, L"BUTTON", i18n::trW("settings.open_memos").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(NoticeLabel, L"STATIC", L"");
-    add(HotkeyLabel, L"STATIC", L"快捷键");
+    add(HotkeyLabel, L"STATIC", i18n::trW("settings.hotkey").c_str());
     add(HotkeyInput, HOTKEY_CLASSW, L"", WS_TABSTOP);
     SetWindowSubclass(control(HotkeyInput), [](HWND input, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) -> LRESULT {
         const auto self = reinterpret_cast<Window*>(data);
@@ -260,7 +263,7 @@ void Window::createControls() {
             if (HIBYTE(value) & HOTKEYF_CONTROL) modifiers |= MOD_CONTROL;
             if (HIBYTE(value) & HOTKEYF_ALT) modifiers |= MOD_ALT;
             if (HIBYTE(value) & HOTKEYF_SHIFT) modifiers |= MOD_SHIFT;
-            const auto label = LOBYTE(value) ? hotkeyLabel(modifiers, LOBYTE(value)) : L"按下快捷键";
+            const auto label = LOBYTE(value) ? hotkeyLabel(modifiers, LOBYTE(value)) : i18n::trW("settings.hotkey_press");
             const auto font = SelectObject(dc, self->font_);
             SetBkMode(dc, TRANSPARENT); SetTextColor(dc, colors.ink);
             rect.left += scaled(6, self->dpi_);
@@ -276,49 +279,53 @@ void Window::createControls() {
             InvalidateRect(input, nullptr, TRUE);
         return result;
     }, 1, reinterpret_cast<DWORD_PTR>(this));
-    add(StartupInput, L"BUTTON", L"开机启动", BS_OWNERDRAW | WS_TABSTOP);
-    add(GeocodingLabel, L"STATIC", L"地名服务（留空停用）");
+    add(StartupInput, L"BUTTON", i18n::trW("settings.startup").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(LanguageLabel, L"STATIC", i18n::trW("settings.language").c_str());
+    const auto currentLangName = pendingLanguage_.empty() ? i18n::trW("settings.lang_system") : i18n::languageName(pendingLanguage_);
+    add(LanguageInput, L"BUTTON", (currentLangName + L" ▾").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(GeocodingLabel, L"STATIC", i18n::trW("settings.geocoding").c_str());
     add(GeocodingInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
     SendMessageW(control(GeocodingInput), EM_SETLIMITTEXT, 2048, 0);
-    add(SettingsSaveButton, L"BUTTON", L"完成", BS_OWNERDRAW | WS_TABSTOP);
-    add(BackButton, L"BUTTON", L"返回", BS_OWNERDRAW | WS_TABSTOP);
-    add(LogoutButton, L"BUTTON", L"退出登录", BS_OWNERDRAW | WS_TABSTOP);
+    add(SettingsSaveButton, L"BUTTON", i18n::trW("button.done").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(BackButton, L"BUTTON", i18n::trW("button.back").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(LogoutButton, L"BUTTON", i18n::trW("settings.signout").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(AddButton, L"BUTTON", L"＋", BS_OWNERDRAW | WS_TABSTOP);
     add(MetadataButton, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP);
     add(SearchInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
-    add(SearchButton, L"BUTTON", L"搜索", BS_OWNERDRAW | WS_TABSTOP);
+    add(SearchButton, L"BUTTON", i18n::trW("link.search").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(MemoList, L"LISTBOX", L"", LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE);
-    add(MoreButton, L"BUTTON", L"更多", BS_OWNERDRAW | WS_TABSTOP);
-    add(LocationLabel, L"STATIC", L"名称");
-    add(LocationAttribution, L"BUTTON", L"© OpenStreetMap · 地名查询", BS_OWNERDRAW | WS_TABSTOP);
-    add(LocateButton, L"BUTTON", L"当前位置", BS_OWNERDRAW | WS_TABSTOP);
-    add(LocationSettingsButton, L"BUTTON", L"定位设置", BS_OWNERDRAW | WS_TABSTOP);
+    add(MoreButton, L"BUTTON", i18n::trW("link.more").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(LocationLabel, L"STATIC", i18n::trW("location.name").c_str());
+    add(LocationAttribution, L"BUTTON", i18n::trW("location.attribution").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(LocateButton, L"BUTTON", i18n::trW("location.current").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(LocationSettingsButton, L"BUTTON", i18n::trW("location.settings_btn").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(LocationName, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
-    add(LatitudeLabel, L"STATIC", L"纬度");
+    add(LatitudeLabel, L"STATIC", i18n::trW("location.latitude").c_str());
     add(LatitudeInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
-    add(LongitudeLabel, L"STATIC", L"经度");
+    add(LongitudeLabel, L"STATIC", i18n::trW("location.longitude").c_str());
     add(LongitudeInput, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_BORDER);
-    add(PanelConfirm, L"BUTTON", L"添加", BS_OWNERDRAW | WS_TABSTOP);
-    add(RecordButton, L"BUTTON", L"开始录音", BS_OWNERDRAW | WS_TABSTOP);
+    add(PanelConfirm, L"BUTTON", i18n::trW("button.add").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(RecordButton, L"BUTTON", i18n::trW("record.start").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(RecordTime, L"STATIC", L"00:00", SS_CENTER);
-    add(PreviewButton, L"BUTTON", L"试听", BS_OWNERDRAW | WS_TABSTOP);
+    add(PreviewButton, L"BUTTON", i18n::trW("record.play").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     for (const auto id : {SearchInput, LocationName}) SendMessageW(control(id), EM_SETLIMITTEXT, 250, 0);
     for (const auto id : {LatitudeInput, LongitudeInput}) SendMessageW(control(id), EM_SETLIMITTEXT, 32, 0);
     const wchar_t* markdownIcons[] = {L"B", L"I", L"H", L"↗", L"•", L"1.", L"☐", L">", L"`", L"</>"};
     for (int id = MdBold; id <= MdCodeBlock; ++id)
         add(id, L"BUTTON", markdownIcons[id - MdBold], BS_OWNERDRAW | WS_TABSTOP);
-    const auto tips = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP,
+    tips_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, handle_, nullptr, instance_, nullptr);
-    for (const auto& [id, tip] : std::map<int, const wchar_t*>{{ThemeButton, L"切换 Light / Dark"},
-            {SettingsButton, L"设置"}, {CloseButton, L"收起 · Esc"}, {SaveButton, L"保存 · Ctrl + Enter"},
-            {AddButton, L"添加附件、图片、录音、关联或位置"}, {MetadataButton, L"管理附件、关联与位置"},
-            {MdBold, L"加粗 · Ctrl + B"}, {MdItalic, L"斜体 · Ctrl + I"}, {MdHeading, L"标题 · Ctrl + Shift + H"},
-            {MdLink, L"链接 · Ctrl + K"}, {MdBullet, L"无序列表 · Ctrl + Shift + L"}, {MdNumbered, L"有序列表 · Ctrl + Shift + O"},
-            {MdTask, L"待办 · Ctrl + Shift + T"}, {MdQuote, L"引用 · Ctrl + Shift + Q"},
-            {MdInlineCode, L"行内代码 · Ctrl + E"}, {MdCodeBlock, L"代码块 · Ctrl + Shift + C"}}) {
+    const std::map<int, std::wstring> tipMap{{ThemeButton, i18n::trW("theme.toggle")},
+            {SettingsButton, i18n::trW("header.settings")}, {CloseButton, i18n::trW("header.close")}, {SaveButton, i18n::trW("compose.save_tooltip")},
+            {AddButton, i18n::trW("compose.add_tooltip")}, {MetadataButton, i18n::trW("compose.metadata_tooltip")},
+            {MdBold, i18n::trW("markdown.bold")}, {MdItalic, i18n::trW("markdown.italic")}, {MdHeading, i18n::trW("markdown.heading")},
+            {MdLink, i18n::trW("markdown.link")}, {MdBullet, i18n::trW("markdown.bullet")}, {MdNumbered, i18n::trW("markdown.numbered")},
+            {MdTask, i18n::trW("markdown.task")}, {MdQuote, i18n::trW("markdown.quote")},
+            {MdInlineCode, i18n::trW("markdown.inline_code")}, {MdCodeBlock, i18n::trW("markdown.code_block")}};
+    for (const auto& [id, tip] : tipMap) {
         TOOLINFOW tool{}; tool.cbSize = sizeof(tool); tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-        tool.hwnd = handle_; tool.uId = reinterpret_cast<UINT_PTR>(control(id)); tool.lpszText = const_cast<wchar_t*>(tip);
-        SendMessageW(tips, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+        tool.hwnd = handle_; tool.uId = reinterpret_cast<UINT_PTR>(control(id)); tool.lpszText = const_cast<wchar_t*>(tip.c_str());
+        SendMessageW(tips_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
     }
     SendMessageW(control(ServerInput), EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"https://memos.example.com"));
     dpi_ = GetDpiForWindow(handle_);
@@ -353,21 +360,23 @@ void Window::layout() {
         place(Editor, x, 64, contentWidth, editorHeight);
         RECT editRect{0, scaled(4, dpi_), scaled(contentWidth, dpi_), scaled(editorHeight - 4, dpi_)};
         SendMessageW(control(Editor), EM_SETRECT, 0, reinterpret_cast<LPARAM>(&editRect));
-        place(Visibility, x - 4, height - 39, 100, 28);
-        place(AddButton, x + 96, height - 39, 28, 28);
-        place(MetadataButton, x + 128, height - 39, std::max(40, width - 224), 28);
+        place(Visibility, x - 4, height - 39, 110, 28);
+        place(AddButton, x + 108, height - 39, 28, 28);
+        place(MetadataButton, x + 140, height - 39, std::max(40, width - 232), 28);
         place(SaveButton, width - 80, height - 39, 68, 28);
     } else if (view_ == View::Settings) {
-        place(HotkeyLabel, x, 48, 72, 22);
-        place(HotkeyInput, x + 82, 44, contentWidth - 82, 28);
-        place(StartupInput, x, 84, 120, 28);
-        place(GeocodingLabel, x, 116, contentWidth, 20);
-        place(GeocodingInput, x, 138, contentWidth, 28);
-        place(AccountLabel, x, 172, contentWidth, 20);
-        place(BrowserButton, x + 130, 84, 106, 28);
-        place(LogoutButton, x + 242, 84, 88, 28);
-        place(BackButton, width - 160, height - 40, 64, 28);
-        place(SettingsSaveButton, width - 88, height - 40, 76, 28);
+        place(HotkeyLabel, x, 38, 72, 22);
+        place(HotkeyInput, x + 82, 34, contentWidth - 82, 26);
+        place(LanguageLabel, x, 68, 72, 22);
+        place(LanguageInput, x + 82, 64, contentWidth - 82, 26);
+        place(StartupInput, x, 96, 118, 26);
+        place(BrowserButton, x + 126, 96, 110, 26);
+        place(LogoutButton, x + 244, 96, 92, 26);
+        place(GeocodingLabel, x, 128, contentWidth, 18);
+        place(GeocodingInput, x, 148, contentWidth, 26);
+        place(AccountLabel, x, 180, contentWidth, 18);
+        place(BackButton, width - 168, height - 36, 72, 26);
+        place(SettingsSaveButton, width - 88, height - 36, 76, 26);
     } else {
         place(BackButton, x - 4, height - 40, 60, 28);
         place(PanelConfirm, width - 88, height - 40, 76, 28);
@@ -377,10 +386,10 @@ void Window::layout() {
             place(MemoList, x, 82, contentWidth, std::max(60, height - 130 - noticeHeight));
             place(MoreButton, width - 158, height - 40, 60, 28);
         } else if (view_ == View::Location) {
-            place(LocationLabel, x, 44, contentWidth - 84, 20); place(LocationName, x, 68, contentWidth, 28);
+            place(LocationLabel, x, 44, contentWidth - 124, 20); place(LocationName, x, 68, contentWidth, 28);
             place(LocationAttribution, x - 4, 170, contentWidth, 24);
-            place(LocateButton, width - 88, 38, 76, 26);
-            place(LocationSettingsButton, x + 60, height - 40, 76, 28);
+            place(LocateButton, width - 120, 38, 108, 26);
+            place(LocationSettingsButton, x + 64, height - 40, 116, 28);
             const int field = (contentWidth - 12) / 2;
             place(LatitudeLabel, x, 110, field, 20); place(LatitudeInput, x, 134, field, 28);
             place(LongitudeLabel, x + field + 12, 110, field, 20); place(LongitudeInput, x + field + 12, 134, field, 28);
@@ -405,8 +414,8 @@ void Window::setView(View view) {
     const auto visible = [&](std::initializer_list<int> ids) { for (const auto id : ids) ShowWindow(control(id), SW_SHOW); };
     visible({Heading, ThemeButton, SettingsButton, CloseButton});
     if (!notice_.empty()) visible({NoticeLabel});
-    text(Heading, view == View::Settings ? L"设置" : view == View::Link ? L"关联 Memo" : view == View::Location ? L"位置" : view == View::Record ? L"录音" : L"MemoQuick");
-    text(BackButton, view == View::Settings ? L"返回" : L"取消");
+    text(Heading, view == View::Settings ? i18n::trW("settings.title") : view == View::Link ? i18n::trW("link.title") : view == View::Location ? i18n::trW("location.title") : view == View::Record ? i18n::trW("record.title") : i18n::trW("app.name"));
+    text(BackButton, view == View::Settings ? i18n::trW("button.back") : i18n::trW("button.cancel"));
     if (view == View::Login) {
         visible({ServerLabel, ServerInput, UsernameLabel, UsernameInput, PasswordLabel, PasswordInput, LoginButton});
         if (!config_.server.empty()) visible({ResumeButton});
@@ -415,7 +424,7 @@ void Window::setView(View view) {
         updateMetadata();
         for (int id = MdBold; id <= MdCodeBlock; ++id) ShowWindow(control(id), SW_SHOW);
     } else if (view == View::Settings) {
-        visible({HotkeyLabel, HotkeyInput, StartupInput, SettingsSaveButton, BackButton, AccountLabel, GeocodingLabel, GeocodingInput});
+        visible({HotkeyLabel, HotkeyInput, LanguageLabel, LanguageInput, StartupInput, SettingsSaveButton, BackButton, AccountLabel, GeocodingLabel, GeocodingInput});
         text(GeocodingInput, wide(config_.geocodingEndpoint));
         if (!user_.name.empty() || !config_.server.empty()) visible({LogoutButton, BrowserButton});
         BYTE modifiers = 0;
@@ -425,6 +434,8 @@ void Window::setView(View view) {
         SendMessageW(control(HotkeyInput), HKM_SETHOTKEY, MAKEWORD(static_cast<BYTE>(config_.key), modifiers), 0);
         startupChecked_ = config_.startAtLogin;
         text(AccountLabel, wide(config_.server));
+        const auto currentLangName = pendingLanguage_.empty() ? i18n::trW("settings.lang_system") : i18n::languageName(pendingLanguage_);
+        text(LanguageInput, currentLangName + L" ▾");
     } else if (view == View::Link) {
         visible({SearchInput, SearchButton, MemoList, MoreButton, BackButton, PanelConfirm});
         EnableWindow(control(MoreButton), !memoPage_.nextPage.empty());
@@ -437,8 +448,8 @@ void Window::setView(View view) {
         if (!config_.geocodingEndpoint.empty()) visible({LocationAttribution});
     } else if (view == View::Record) {
         visible({RecordTime, RecordButton, PreviewButton, BackButton, PanelConfirm});
-        text(RecordButton, recording_.empty() ? L"开始录音" : L"重新录制");
-        text(RecordTime, recording_.empty() ? L"00:00" : L"已停止");
+        text(RecordButton, recording_.empty() ? i18n::trW("record.start") : i18n::trW("record.again"));
+        text(RecordTime, recording_.empty() ? L"00:00" : i18n::trW("record.stopped"));
         EnableWindow(control(PreviewButton), !recording_.empty());
     }
     layout();
@@ -447,21 +458,136 @@ void Window::setView(View view) {
 }
 void Window::chooseVisibility() {
     const auto menu = CreatePopupMenu();
-    const wchar_t* scopes[] = {L"仅自己", L"已登录用户", L"公开"};
-    for (int i = 0; i < 3; ++i) AppendMenuW(menu, MF_STRING | (visibility_ == i ? MF_CHECKED : 0), static_cast<UINT_PTR>(i + 1), scopes[i]);
+    const std::wstring scopes[] = {
+        i18n::trW("compose.visibility.private"),
+        i18n::trW("compose.visibility.protected"),
+        i18n::trW("compose.visibility.public")
+    };
+    for (int i = 0; i < 3; ++i) AppendMenuW(menu, MF_STRING | (visibility_ == i ? MF_CHECKED : 0), static_cast<UINT_PTR>(i + 1), scopes[i].c_str());
     RECT rect{}; GetWindowRect(control(Visibility), &rect);
     const auto command = trackMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top);
     if (command) {
         visibility_ = command - 1;
-        text(Visibility, std::wstring(scopes[visibility_]) + L" ▾");
+        text(Visibility, scopes[visibility_] + L" ▾");
         draftDirty_ = true; SetTimer(handle_, DraftTimer, 400, nullptr);
     }
+}
+void Window::chooseLanguage() {
+    const auto menu = CreatePopupMenu();
+    const auto langs = i18n::availableLanguages();
+    const bool isSystem = pendingLanguage_.empty();
+    AppendMenuW(menu, MF_STRING | (isSystem ? MF_CHECKED : 0), 1, i18n::trW("settings.lang_system").c_str());
+    for (size_t i = 0; i < langs.size(); ++i) {
+        const bool checked = !isSystem && pendingLanguage_ == langs[i].id;
+        AppendMenuW(menu, MF_STRING | (checked ? MF_CHECKED : 0), static_cast<UINT_PTR>(i + 2), langs[i].name.c_str());
+    }
+    RECT rect{}; GetWindowRect(control(LanguageInput), &rect);
+    const auto command = trackMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, rect.left, rect.top);
+    if (command == 1) {
+        pendingLanguage_ = "";
+        i18n::setLanguage("");
+        retranslate();
+    } else if (command >= 2 && command < 2 + langs.size()) {
+        pendingLanguage_ = langs[command - 2].id;
+        i18n::setLanguage(pendingLanguage_);
+        retranslate();
+    }
+}
+void Window::retranslate() {
+    text(Heading, view_ == View::Settings ? i18n::trW("settings.title")
+                : view_ == View::Link ? i18n::trW("link.title")
+                : view_ == View::Location ? i18n::trW("location.title")
+                : view_ == View::Record ? i18n::trW("record.title")
+                : i18n::trW("app.name"));
+    text(BackButton, view_ == View::Settings ? i18n::trW("button.back") : i18n::trW("button.cancel"));
+    text(ServerLabel, i18n::trW("login.server"));
+    text(UsernameLabel, i18n::trW("login.username"));
+    text(PasswordLabel, i18n::trW("login.password"));
+    text(LoginButton, busy_ ? i18n::trW("login.connecting") : i18n::trW("login.signin"));
+    text(ResumeButton, i18n::trW("login.resume"));
+
+    const std::wstring visibilityTexts[] = {
+        i18n::trW("compose.visibility.private"),
+        i18n::trW("compose.visibility.protected"),
+        i18n::trW("compose.visibility.public")
+    };
+    text(Visibility, visibilityTexts[std::clamp(visibility_, 0, 2)] + L" ▾");
+    text(SaveButton, busy_ ? i18n::trW("compose.saving") : i18n::trW("compose.save"));
+    updateMetadata();
+
+    text(HotkeyLabel, i18n::trW("settings.hotkey"));
+    text(StartupInput, i18n::trW("settings.startup"));
+    text(LanguageLabel, i18n::trW("settings.language"));
+    const auto currentLangName = pendingLanguage_.empty()
+        ? i18n::trW("settings.lang_system")
+        : i18n::languageName(pendingLanguage_);
+    text(LanguageInput, currentLangName + L" ▾");
+    text(BrowserButton, i18n::trW("settings.open_memos"));
+    text(LogoutButton, i18n::trW("settings.signout"));
+    text(GeocodingLabel, i18n::trW("settings.geocoding"));
+    text(SettingsSaveButton, i18n::trW("button.done"));
+
+    text(SearchButton, i18n::trW("link.search"));
+    text(MoreButton, i18n::trW("link.more"));
+
+    text(LocationLabel, i18n::trW("location.name"));
+    text(LocateButton, locationReader_.active() ? i18n::trW("location.cancel_locating")
+                     : locationNames_.active() ? i18n::trW("location.cancel_lookup")
+                     : i18n::trW("location.current"));
+    text(LocationSettingsButton, i18n::trW("location.settings_btn"));
+    text(LatitudeLabel, i18n::trW("location.latitude"));
+    text(LongitudeLabel, i18n::trW("location.longitude"));
+    text(LocationAttribution, i18n::trW("location.attribution"));
+
+    text(RecordButton, recording_.empty() ? i18n::trW("record.start") : i18n::trW("record.again"));
+    if (recorder_.active()) {
+        const auto seconds = recorder_.seconds();
+        text(RecordTime, L"● " + std::to_wstring(seconds / 60) + L":" + (seconds % 60 < 10 ? L"0" : L"") + std::to_wstring(seconds % 60));
+    } else {
+        text(RecordTime, recording_.empty() ? L"00:00" : i18n::trFormatW("record.duration", std::to_wstring((recording_.size() - 44) / 32000)));
+    }
+    text(PreviewButton, i18n::trW("record.play"));
+
+    text(PanelConfirm, i18n::trW("button.add"));
+
+    if (tips_) {
+        const std::map<int, std::wstring> tipMap{
+            {ThemeButton, i18n::trW("theme.toggle")},
+            {SettingsButton, i18n::trW("header.settings")},
+            {CloseButton, i18n::trW("header.close")},
+            {SaveButton, i18n::trW("compose.save_tooltip")},
+            {AddButton, i18n::trW("compose.add_tooltip")},
+            {MetadataButton, i18n::trW("compose.metadata_tooltip")},
+            {MdBold, i18n::trW("markdown.bold")},
+            {MdItalic, i18n::trW("markdown.italic")},
+            {MdHeading, i18n::trW("markdown.heading")},
+            {MdLink, i18n::trW("markdown.link")},
+            {MdBullet, i18n::trW("markdown.bullet")},
+            {MdNumbered, i18n::trW("markdown.numbered")},
+            {MdTask, i18n::trW("markdown.task")},
+            {MdQuote, i18n::trW("markdown.quote")},
+            {MdInlineCode, i18n::trW("markdown.inline_code")},
+            {MdCodeBlock, i18n::trW("markdown.code_block")}
+        };
+        for (const auto& [id, tip] : tipMap) {
+            TOOLINFOW tool{};
+            tool.cbSize = sizeof(tool);
+            tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+            tool.hwnd = handle_;
+            tool.uId = reinterpret_cast<UINT_PTR>(control(id));
+            tool.lpszText = const_cast<wchar_t*>(tip.c_str());
+            SendMessageW(tips_, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+        }
+    }
+
+    trayIcon(handle_, instance_, NIM_MODIFY);
+    InvalidateRect(handle_, nullptr, TRUE);
 }
 void Window::setBusy(bool busy) {
     busy_ = busy;
     for (int id = MdBold; id <= MdCodeBlock; ++id) EnableWindow(control(id), !busy);
     for (const auto id : {ServerInput, UsernameInput, PasswordInput, LoginButton, ResumeButton, Visibility,
-            SaveButton, SettingsButton, ThemeButton, HotkeyInput, StartupInput, GeocodingInput, SettingsSaveButton, BackButton, LogoutButton}) {
+            SaveButton, SettingsButton, ThemeButton, HotkeyInput, LanguageInput, StartupInput, GeocodingInput, SettingsSaveButton, BackButton, LogoutButton}) {
         EnableWindow(control(id), !busy);
     }
     SendMessageW(control(Editor), EM_SETREADONLY, busy ? TRUE : FALSE, 0);
@@ -469,8 +595,8 @@ void Window::setBusy(bool busy) {
     for (const auto id : {LocateButton, LocationSettingsButton, LatitudeInput, LongitudeInput}) EnableWindow(control(id), !busy);
     EnableWindow(control(MoreButton), !busy && !memoPage_.nextPage.empty());
     updateMetadata();
-    text(LoginButton, busy ? L"连接中…" : L"登录");
-    text(SaveButton, busy ? L"保存中…" : L"保存");
+    text(LoginButton, busy ? i18n::trW("login.connecting") : i18n::trW("login.signin"));
+    text(SaveButton, busy ? i18n::trW("compose.saving") : i18n::trW("compose.save"));
 }
 void Window::setNotice(const std::string& notice, bool informational) {
     notice_ = notice;
@@ -492,7 +618,12 @@ void Window::enterCompose() {
     settingEditor_ = true;
     text(Editor, wide(draft.content));
     visibility_ = draft.visibility == "PROTECTED" ? 1 : draft.visibility == "PUBLIC" ? 2 : 0;
-    text(Visibility, visibility_ == 1 ? L"已登录用户 ▾" : visibility_ == 2 ? L"公开 ▾" : L"仅自己 ▾");
+    const std::wstring visibilityTexts[] = {
+        i18n::trW("compose.visibility.private"),
+        i18n::trW("compose.visibility.protected"),
+        i18n::trW("compose.visibility.public")
+    };
+    text(Visibility, visibilityTexts[std::clamp(visibility_, 0, 2)] + L" ▾");
     settingEditor_ = false;
     draftDirty_ = false;
     updateMetadata();
@@ -502,13 +633,13 @@ void Window::enterCompose() {
 void Window::launch(Action action, std::function<void(Completion&)> work) {
     if (busy_) return;
     setNotice(""); setBusy(true);
-    if (action == Action::Upload) text(SaveButton, L"上传中…");
+    if (action == Action::Upload) text(SaveButton, i18n::trW("compose.uploading"));
     if (worker_.joinable()) worker_.join();
     worker_ = std::jthread([this, action, work = std::move(work)] {
         auto result = std::make_unique<Completion>(); result->action = action;
         try { work(*result); }
         catch (const Error& error) { result->error = error.what(); result->errorKind = error.kind; result->status = error.status; }
-        catch (const std::exception&) { result->error = "操作未能完成，请检查本地数据与服务状态；草稿已保留。"; }
+        catch (const std::exception&) { result->error = i18n::tr("notice.generic_failed"); }
         const auto pointer = result.release();
         if (!PostMessageW(handle_, CompleteMessage, 0, reinterpret_cast<LPARAM>(pointer))) delete pointer;
     });
@@ -550,7 +681,7 @@ void Window::complete(std::unique_ptr<Completion> result) {
             }
             memoPage_.nextPage = result->page.nextPage;
             EnableWindow(control(MoreButton), !memoPage_.nextPage.empty());
-            if (memoPage_.memos.empty()) setNotice("没有找到匹配的 Memo。");
+            if (memoPage_.memos.empty()) setNotice(i18n::tr("link.no_match"));
         }
         if (result->action == Action::Logout) {
             client_.reset(); user_ = {}; extras_ = {}; draftDirty_ = false;
@@ -562,7 +693,7 @@ void Window::complete(std::unique_ptr<Completion> result) {
         } else if (result->action == Action::Save && result->saved) {
             extras_ = {}; updateMetadata();
             settingEditor_ = true; text(Editor, L""); settingEditor_ = false;
-            visibility_ = 0; text(Visibility, L"仅自己 ▾");
+            visibility_ = 0; text(Visibility, i18n::trW("compose.visibility.private") + L" ▾");
             draftDirty_ = false;
             if (result->error.empty()) { rememberPosition(); ShowWindow(handle_, SW_HIDE); }
         }
@@ -577,7 +708,7 @@ void Window::complete(std::unique_ptr<Completion> result) {
             }
             if (result->errorKind == ErrorKind::Auth) { text(PasswordInput, L""); setView(View::Login); }
             setNotice(result->error);
-        } else if (!hotkeyRegistered_) { setNotice("快捷键已被占用，请在设置中换一个组合。"); }
+        } else if (!hotkeyRegistered_) { setNotice(i18n::tr("notice.hotkey_taken")); }
     } catch (const std::exception& error) { setNotice(error.what()); }
 }
 void Window::login() {
@@ -585,7 +716,7 @@ void Window::login() {
     const auto server = parseServer(utf8(text(ServerInput)));
     const auto username = utf8(text(UsernameInput));
     auto password = utf8(text(PasswordInput));
-    if (username.empty() || password.empty()) throw Error("请填写用户名和密码。", ErrorKind::Validation);
+    if (username.empty() || password.empty()) throw Error(i18n::tr("error.fill_credentials"), ErrorKind::Validation);
     if (!flushDraft()) return;
     KillTimer(handle_, ResumeTimer); resumePending_ = false; resumeAttempts_ = 0;
     text(PasswordInput, L"");
@@ -611,7 +742,7 @@ void Window::restore() {
 void Window::save() {
     if (busy_ || !client_ || user_.name.empty()) return;
     const auto draft = currentDraft();
-    if (!validDraft(draft) || (trim(draft.content).empty() && draft.attachments.empty())) { setNotice("写点什么，或添加一个附件。 "); return; }
+    if (!validDraft(draft) || (trim(draft.content).empty() && draft.attachments.empty())) { setNotice(i18n::tr("notice.empty_note")); return; }
     draftDirty_ = true;
     if (!flushDraft()) return;
     launch(Action::Save, [this, draft](Completion& result) {
@@ -620,7 +751,7 @@ void Window::save() {
         client_->createMemo(*result.draft);
         result.saved = true;
         try { store_.saveDraft(client_->server().url, client_->user().name, {}); }
-        catch (...) { throw Error("记录已保存，但旧草稿清理失败。请检查磁盘，不要重复提交旧草稿。", ErrorKind::Storage); }
+        catch (...) { throw Error(i18n::tr("error.clean_draft_failed"), ErrorKind::Storage); }
         for (const auto& a : result.draft->attachments) if (!a.localId.empty()) store_.removeAttachment(a.localId);
         result.draft.reset();
     });
@@ -648,9 +779,10 @@ void Window::settingsSave() {
     if (flags & HOTKEYF_SHIFT) next.modifiers |= MOD_SHIFT;
     next.startAtLogin = startupChecked_;
     next.geocodingEndpoint = trim(utf8(text(GeocodingInput)));
+    next.language = pendingLanguage_;
     if (!next.geocodingEndpoint.empty()) geocodingUrl(next.geocodingEndpoint, 0, 0);
     const bool changed = next.modifiers != config_.modifiers || next.key != config_.key || !hotkeyRegistered_;
-    if (changed && !registerHotkey(next.modifiers, next.key, true)) throw Error("快捷键无效或已被占用，请使用含 Ctrl 或 Alt 的其他组合。", ErrorKind::Validation);
+    if (changed && !registerHotkey(next.modifiers, next.key, true)) throw Error(i18n::tr("notice.hotkey_invalid"), ErrorKind::Validation);
     try {
         if (!smoke_) setStartup(next.startAtLogin);
         store_.saveConfig(next);
@@ -668,25 +800,28 @@ void Window::browser() {
 }
 void Window::trayMenu() {
     const auto menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, 1, L"快速记录");
-    AppendMenuW(menu, MF_STRING | (config_.server.empty() ? MF_GRAYED : 0), 2, L"打开 Memos");
-    AppendMenuW(menu, MF_STRING, 3, L"设置");
+    AppendMenuW(menu, MF_STRING, 1, i18n::trW("tray.quick_note").c_str());
+    AppendMenuW(menu, MF_STRING | (config_.server.empty() ? MF_GRAYED : 0), 2, i18n::trW("tray.open_memos").c_str());
+    AppendMenuW(menu, MF_STRING, 3, i18n::trW("tray.settings").c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 4, L"退出 MemoQuick");
+    AppendMenuW(menu, MF_STRING, 4, i18n::trW("tray.quit").c_str());
     POINT point{}; GetCursorPos(&point); SetForegroundWindow(handle_);
     const auto command = trackMenu(menu, TPM_RIGHTBUTTON, point.x, point.y);
     if (command == 1) show();
     if (command == 2) browser();
     if (command == 3 && !busy_) {
         if (view_ == View::Record && (recorder_.active() || !recording_.empty())) { finishRecording(true); show(); return; }
-        beforeSettings_ = view_; setView(View::Settings); setNotice(""); show();
+        beforeSettings_ = view_;
+        pendingLanguage_ = config_.language;
+        retranslate();
+        setView(View::Settings); setNotice(""); show();
     }
     if (command == 4) quit();
     PostMessageW(handle_, WM_NULL, 0, 0);
 }
 void Window::quit() {
     if (view_ == View::Record && (recorder_.active() || !recording_.empty())) finishRecording(true);
-    if (busy_) { setNotice("正在处理请求，请完成后再退出。"); show(); return; }
+    if (busy_) { setNotice(i18n::tr("notice.busy_quit")); show(); return; }
     if (!flushDraft()) { show(); return; }
     rememberPosition();
     DestroyWindow(handle_);
@@ -850,7 +985,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (id == LocationAttribution) ShellExecuteW(handle_, L"open", L"https://www.openstreetmap.org/copyright", nullptr, nullptr, SW_SHOWNORMAL);
         if (id == LocationSettingsButton) {
             const auto opened = ShellExecuteW(handle_, L"open", L"ms-settings:privacy-location", nullptr, nullptr, SW_SHOWNORMAL);
-            if (reinterpret_cast<INT_PTR>(opened) <= 32) setNotice("无法打开定位设置，请在 Windows 设置中搜索「位置」。");
+            if (reinterpret_cast<INT_PTR>(opened) <= 32) setNotice(i18n::tr("location.cant_open_settings"));
         }
         if (id == RecordButton) record();
         if (id == PreviewButton && !recording_.empty()) PlaySoundW(reinterpret_cast<LPCWSTR>(recording_.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
@@ -862,15 +997,32 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (id == CloseButton) hide();
         if (id == ThemeButton) toggleTheme();
         if (id == Visibility) chooseVisibility();
+        if (id == LanguageInput) chooseLanguage();
         if (id == StartupInput) { startupChecked_ = !startupChecked_; InvalidateRect(control(StartupInput), nullptr, TRUE); }
         if (id == SettingsButton) {
             if (view_ == View::Record && (recorder_.active() || !recording_.empty())) { finishRecording(true); return 0; }
             setNotice("");
-            if (view_ == View::Settings) setView(beforeSettings_);
-            else { beforeSettings_ = view_; setView(View::Settings); }
+            if (view_ == View::Settings) {
+                if (pendingLanguage_ != config_.language) {
+                    pendingLanguage_ = config_.language;
+                    i18n::setLanguage(config_.language);
+                    retranslate();
+                }
+                setView(beforeSettings_);
+            } else {
+                beforeSettings_ = view_;
+                pendingLanguage_ = config_.language;
+                retranslate();
+                setView(View::Settings);
+            }
         }
         if (id == BackButton) {
             if (view_ == View::Record) { PlaySoundW(nullptr, nullptr, 0); recorder_.cancel(); recording_.clear(); KillTimer(handle_,3); }
+            if (view_ == View::Settings && pendingLanguage_ != config_.language) {
+                pendingLanguage_ = config_.language;
+                i18n::setLanguage(config_.language);
+                retranslate();
+            }
             setNotice(""); setView(view_ == View::Settings ? beforeSettings_ : View::Compose);
         }
         if (id == SettingsSaveButton) settingsSave();

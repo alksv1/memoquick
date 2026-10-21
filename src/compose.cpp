@@ -11,16 +11,16 @@ using Json = nlohmann::json;
 namespace {
 Json responseJson(const std::string& value) {
     try { return Json::parse(value); }
-    catch (const Json::exception&) { throw Error("服务返回了无效数据。", ErrorKind::Protocol); }
+    catch (const Json::exception&) { throw Error(i18n::tr("error.invalid_response_data"), ErrorKind::Protocol); }
 }
 std::string base64(const std::string& bytes) {
     DWORD length = 0;
     const auto data = reinterpret_cast<const BYTE*>(bytes.data());
     if (!CryptBinaryToStringA(data, static_cast<DWORD>(bytes.size()), CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &length))
-        throw Error("无法编码附件。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.cant_encode_attachment"), ErrorKind::Storage);
     std::string result(length, '\0');
     if (!CryptBinaryToStringA(data, static_cast<DWORD>(bytes.size()), CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, result.data(), &length))
-        throw Error("无法编码附件。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.cant_encode_attachment"), ErrorKind::Storage);
     result.resize(length);
     return result;
 }
@@ -28,7 +28,7 @@ long long integer(const Json& value) {
     try {
         if (value.is_string()) return std::stoll(value.get<std::string>());
         return value.get<long long>();
-    } catch (...) { throw Error("上传进度无效。", ErrorKind::Protocol); }
+    } catch (...) { throw Error(i18n::tr("error.invalid_upload_progress"), ErrorKind::Protocol); }
 }
 } // namespace
 bool validResource(const std::string& name, const std::string& prefix) {
@@ -49,7 +49,7 @@ Location parseLocation(const std::string& label, const std::string& latitude, co
         size_t latEnd = 0, lonEnd = 0;
         result.latitude = std::stod(lat, &latEnd); result.longitude = std::stod(lon, &lonEnd);
         if (latEnd != lat.size() || lonEnd != lon.size() || !validLocation(result)) throw std::invalid_argument("location");
-    } catch (...) { throw Error("请填写名称、纬度（−90～90）和经度（−180～180）。", ErrorKind::Validation); }
+    } catch (...) { throw Error(i18n::tr("error.invalid_location_fields"), ErrorKind::Validation); }
     return result;
 }
 bool validDraft(const Draft& draft) {
@@ -77,7 +77,7 @@ std::string encodeUrl(const std::string& value) {
 }
 std::string imageMarkdown(const Server& server, const Attachment& attachment) {
     if (!validResource(attachment.name, "attachments/") || !attachment.type.starts_with("image/"))
-        throw Error("图片附件无效。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.invalid_image_attachment"), ErrorKind::Validation);
     std::string label;
     for (const char c : attachment.filename) {
         if (c == '\r' || c == '\n') { label += ' '; continue; }
@@ -108,7 +108,7 @@ std::string Client::authenticated(const std::string& path, const std::string& me
 }
 Attachment Client::uploadAttachment(const Attachment& attachment, const std::string& bytes) {
     if (bytes.empty() || bytes.size() > AttachmentSizeMax || attachment.filename.empty())
-        throw Error("附件需非空且不超过 20 MiB。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.attachment_size_limit"), ErrorKind::Validation);
     discover();
     const Json metadata{{"filename",attachment.filename},{"type",attachment.type}};
     Json uploaded;
@@ -129,7 +129,7 @@ Attachment Client::uploadAttachment(const Attachment& attachment, const std::str
         const auto id = initial.value("uploadId", "");
         const auto maximum = integer(initial.value("maxChunkSize", Json(0)));
         if (id.empty() || maximum <= 0 || integer(initial.value("committedSize", Json(0))) != 0)
-            throw Error("无法初始化附件上传。", ErrorKind::Protocol);
+            throw Error(i18n::tr("error.cant_init_upload"), ErrorKind::Protocol);
         const auto chunk = std::min<size_t>(static_cast<size_t>(maximum), 2 * 1024 * 1024);
         for (size_t offset = 0; offset < bytes.size();) {
             const auto end = std::min(offset + chunk, bytes.size());
@@ -137,7 +137,7 @@ Attachment Client::uploadAttachment(const Attachment& attachment, const std::str
                 {"data",base64(bytes.substr(offset, end - offset))},{"finishWrite",end == bytes.size()}};
             const auto part = responseJson(authenticated(api_ + "/attachments:upload", "POST", body.dump()));
             if (integer(part.value("committedSize", Json(-1))) != static_cast<long long>(end))
-                throw Error("附件上传进度不一致，请重试。", ErrorKind::Protocol);
+                throw Error(i18n::tr("error.upload_progress_mismatch"), ErrorKind::Protocol);
             if (end == bytes.size()) uploaded = part.value("attachment", Json::object());
             offset = end;
         }
@@ -146,12 +146,12 @@ Attachment Client::uploadAttachment(const Attachment& attachment, const std::str
     result.name = uploaded.value("name", "");
     result.filename = uploaded.value("filename", attachment.filename);
     result.type = uploaded.value("type", attachment.type);
-    if (!validResource(result.name, "attachments/")) throw Error("无法确认附件上传结果，本地文件已保留。", ErrorKind::Protocol);
+    if (!validResource(result.name, "attachments/")) throw Error(i18n::tr("error.cant_confirm_upload"), ErrorKind::Protocol);
     return result;
 }
 MemoPage Client::listMemos(const std::string& search, const std::string& page) {
     discover();
-    if (search.size() > 1024 || page.size() > 4096) throw Error("搜索内容过长。", ErrorKind::Validation);
+    if (search.size() > 1024 || page.size() > 4096) throw Error(i18n::tr("error.search_too_long"), ErrorKind::Validation);
     const auto query = [&] {
         std::string filter;
         if (creatorFilter_ == 0) filter = "creator == " + Json(user_.name).dump();

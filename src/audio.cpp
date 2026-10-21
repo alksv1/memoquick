@@ -4,7 +4,7 @@
 namespace mq {
 std::string waveFile(const std::string& samples) {
     if (samples.empty() || samples.size() > AttachmentSizeMax - 44 || samples.size() % 2)
-        throw Error("录音为空或长度异常。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.audio_empty_or_bad"), ErrorKind::Validation);
     std::string result;
     const auto number = [&](size_t value, int count) {
         for (int i = 0; i < count; ++i) { result += static_cast<char>(value & 255); value >>= 8; }
@@ -21,17 +21,17 @@ void AudioRecorder::start() {
     WAVEFORMATEX format{WAVE_FORMAT_PCM,1,16000,32000,2,16,0};
     if (waveInOpen(&device_, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
         device_ = nullptr;
-        throw Error("无法打开麦克风，请检查设备及 Windows 麦克风权限。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.mic_open"), ErrorKind::Storage);
     }
     for (size_t i = 0; i < headers_.size(); ++i) {
         auto& header = headers_[i];
         header.lpData = buffers_[i].data(); header.dwBufferLength = static_cast<DWORD>(buffers_[i].size());
         if (waveInPrepareHeader(device_, &header, sizeof(header)) != MMSYSERR_NOERROR
             || waveInAddBuffer(device_, &header, sizeof(header)) != MMSYSERR_NOERROR) {
-            cancel(); throw Error("无法准备录音。", ErrorKind::Storage);
+            cancel(); throw Error(i18n::tr("error.audio_prep"), ErrorKind::Storage);
         }
     }
-    if (waveInStart(device_) != MMSYSERR_NOERROR) { cancel(); throw Error("无法开始录音。", ErrorKind::Storage); }
+    if (waveInStart(device_) != MMSYSERR_NOERROR) { cancel(); throw Error(i18n::tr("error.audio_start"), ErrorKind::Storage); }
 }
 bool AudioRecorder::poll() {
     if (!active()) return false;
@@ -43,13 +43,13 @@ bool AudioRecorder::poll() {
         if (samples_.size() >= limit) return true;
         header.dwBytesRecorded = 0;
         if (waveInAddBuffer(device_, &header, sizeof(header)) != MMSYSERR_NOERROR)
-            throw Error("录音设备已断开，请停止并保留已有录音。", ErrorKind::Storage);
+            throw Error(i18n::tr("error.audio_disconnected"), ErrorKind::Storage);
         next_ = (next_ + 1) % headers_.size();
     }
     return false;
 }
 std::string AudioRecorder::finish() {
-    if (!active()) throw Error("录音尚未开始。", ErrorKind::Validation);
+    if (!active()) throw Error(i18n::tr("error.audio_not_started"), ErrorKind::Validation);
     waveInStop(device_); waveInReset(device_);
     for (size_t i = 0; i < headers_.size(); ++i) {
         const auto& header = headers_[(next_ + i) % headers_.size()];

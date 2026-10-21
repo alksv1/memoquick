@@ -13,7 +13,7 @@ using Microsoft::WRL::ComPtr;
 namespace {
 constexpr size_t BatchSizeMax = 64 * 1024 * 1024;
 constexpr uint64_t PixelCountMax = 16 * 1024 * 1024;
-Error pasteError() { return Error("无法读取剪贴板附件，请重新复制后再试。", ErrorKind::Validation); }
+Error pasteError() { return Error(i18n::tr("error.clipboard_read"), ErrorKind::Validation); }
 void checked(HRESULT status) { if (FAILED(status)) throw pasteError(); }
 struct Medium {
     STGMEDIUM value{};
@@ -42,7 +42,7 @@ bool available(IDataObject& source, CLIPFORMAT format, DWORD type) {
 std::string streamBytes(IStream& stream) {
     STATSTG stat{};
     if (SUCCEEDED(stream.Stat(&stat, STATFLAG_NONAME)) && stat.cbSize.QuadPart > AttachmentSizeMax)
-        throw Error("附件不能超过 20 MiB。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.attachment_20mb"), ErrorKind::Validation);
     LARGE_INTEGER start{};
     // Virtual providers may expose a non-seekable stream already at its start.
     (void)stream.Seek(start, STREAM_SEEK_SET, nullptr);
@@ -53,24 +53,24 @@ std::string streamBytes(IStream& stream) {
         const auto status = stream.Read(buffer, sizeof(buffer), &read);
         checked(status);
         if (read > sizeof(buffer) || bytes.size() + read > AttachmentSizeMax)
-            throw Error("附件不能超过 20 MiB。", ErrorKind::Validation);
+            throw Error(i18n::tr("error.attachment_20mb"), ErrorKind::Validation);
         bytes.append(buffer, read);
         if (status == S_FALSE || !read) break;
     }
-    if (bytes.empty()) throw Error("不能粘贴空附件。", ErrorKind::Validation);
+    if (bytes.empty()) throw Error(i18n::tr("error.empty_attachment"), ErrorKind::Validation);
     return bytes;
 }
 std::string mediumBytes(const Medium& medium) {
     if (medium.value.tymed == TYMED_ISTREAM && medium.value.pstm) return streamBytes(*medium.value.pstm);
     if (medium.value.tymed != TYMED_HGLOBAL) throw pasteError();
     const GlobalBytes bytes(medium.value.hGlobal);
-    if (bytes.size > AttachmentSizeMax) throw Error("附件不能超过 20 MiB。", ErrorKind::Validation);
+    if (bytes.size > AttachmentSizeMax) throw Error(i18n::tr("error.attachment_20mb"), ErrorKind::Validation);
     return {reinterpret_cast<const char*>(bytes.data), bytes.size};
 }
 void dimensions(IWICBitmapSource& source) {
     UINT width = 0, height = 0; checked(source.GetSize(&width, &height));
     if (!width || !height || static_cast<uint64_t>(width) * height > PixelCountMax)
-        throw Error("图片过大，请缩小到 1600 万像素以内再粘贴。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.image_too_large"), ErrorKind::Validation);
 }
 ComPtr<IWICImagingFactory> imagingFactory() {
     ComPtr<IWICImagingFactory> factory;
@@ -106,7 +106,7 @@ std::string dibPng(const GlobalBytes& bytes) {
         || header.biHeight == std::numeric_limits<LONG>::min()) throw pasteError();
     const auto height = static_cast<uint64_t>(header.biHeight < 0 ? -header.biHeight : header.biHeight);
     if (static_cast<uint64_t>(header.biWidth) * height > PixelCountMax)
-        throw Error("图片过大，请缩小到 1600 万像素以内再粘贴。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.image_too_large"), ErrorKind::Validation);
     if (header.biBitCount != 1 && header.biBitCount != 4 && header.biBitCount != 8
         && header.biBitCount != 16 && header.biBitCount != 24 && header.biBitCount != 32) throw pasteError();
     if (header.biCompression != BI_RGB && header.biCompression != BI_BITFIELDS && header.biCompression != 6) throw pasteError();
@@ -139,7 +139,7 @@ std::string imageFilename() {
 }
 void append(std::vector<ClipboardAttachment>& result, size_t& total, std::string filename, std::string bytes) {
     total += bytes.size();
-    if (total > BatchSizeMax) throw Error("单次粘贴附件总量不能超过 64 MiB。", ErrorKind::Validation);
+    if (total > BatchSizeMax) throw Error(i18n::tr("error.batch_size_limit"), ErrorKind::Validation);
     const auto path = std::filesystem::path(wide(filename)).filename();
     if (path.empty() || path == L"." || path == L"..") throw pasteError();
     result.push_back({utf8(path.wstring()), fileMime(path), std::move(bytes)});
@@ -168,7 +168,7 @@ std::vector<ClipboardAttachment> clipboardAttachments(IDataObject& source) {
         if (!terminated) throw pasteError();
         const auto drop = reinterpret_cast<HDROP>(medium.value.hGlobal);
         const auto count = DragQueryFileW(drop, 0xffffffff, nullptr, 0);
-        if (!count || count > 32) throw Error("单次最多粘贴 32 个文件。", ErrorKind::Validation);
+        if (!count || count > 32) throw Error(i18n::tr("error.batch_count_limit"), ErrorKind::Validation);
         for (UINT i = 0; i < count; ++i) {
             const auto length = DragQueryFileW(drop, i, nullptr, 0);
             if (!length || length >= 32768) throw pasteError();
@@ -178,13 +178,13 @@ std::vector<ClipboardAttachment> clipboardAttachments(IDataObject& source) {
             const std::filesystem::path path(filename);
             const auto attributes = GetFileAttributesW(path.c_str());
             if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY))
-                throw Error("请复制文件，暂不支持粘贴文件夹。", ErrorKind::Validation);
+                throw Error(i18n::tr("error.folder_unsupported"), ErrorKind::Validation);
             std::ifstream file(path, std::ios::binary | std::ios::ate);
             if (!file) throw pasteError();
             const auto size = file.tellg();
             if (size <= 0 || size > static_cast<std::streamoff>(AttachmentSizeMax))
-                throw Error("附件需非空且不超过 20 MiB。", ErrorKind::Validation);
-            if (total + static_cast<size_t>(size) > BatchSizeMax) throw Error("单次粘贴附件总量不能超过 64 MiB。", ErrorKind::Validation);
+                throw Error(i18n::tr("error.attachment_size_limit"), ErrorKind::Validation);
+            if (total + static_cast<size_t>(size) > BatchSizeMax) throw Error(i18n::tr("error.batch_size_limit"), ErrorKind::Validation);
             std::string data(static_cast<size_t>(size), '\0'); file.seekg(0);
             if (!file.read(data.data(), size)) throw pasteError();
             append(result, total, utf8(path.filename().wstring()), std::move(data));
@@ -205,13 +205,13 @@ std::vector<ClipboardAttachment> clipboardAttachments(IDataObject& source) {
             if (((descriptor.dwFlags & FD_ATTRIBUTES) && (descriptor.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
                 || wcsnlen(descriptor.cFileName, MAX_PATH) == MAX_PATH) throw pasteError();
             if ((descriptor.dwFlags & FD_FILESIZE) && (descriptor.nFileSizeHigh || descriptor.nFileSizeLow > AttachmentSizeMax))
-                throw Error("附件不能超过 20 MiB。", ErrorKind::Validation);
+                throw Error(i18n::tr("error.attachment_20mb"), ErrorKind::Validation);
             const Medium content(source, contents, TYMED_ISTREAM | TYMED_HGLOBAL, static_cast<LONG>(i));
             auto data = mediumBytes(content);
             if (descriptor.dwFlags & FD_FILESIZE) {
                 if (data.size() < descriptor.nFileSizeLow || (content.value.tymed == TYMED_ISTREAM && data.size() != descriptor.nFileSizeLow)) throw pasteError();
                 data.resize(descriptor.nFileSizeLow);
-                if (data.empty()) throw Error("不能粘贴空附件。", ErrorKind::Validation);
+                if (data.empty()) throw Error(i18n::tr("error.empty_attachment"), ErrorKind::Validation);
             }
             append(result, total, utf8(descriptor.cFileName), std::move(data));
         }

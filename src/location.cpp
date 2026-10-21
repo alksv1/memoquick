@@ -11,19 +11,19 @@ using namespace winrt::Windows::Foundation;
 namespace {
 Error locationError(HRESULT result) {
     if (result == E_ACCESSDENIED)
-        return Error("定位未获允许，请开启 Windows 位置权限。", ErrorKind::LocationDenied);
+        return Error(i18n::tr("error.location_denied"), ErrorKind::LocationDenied);
     if (result == HRESULT_FROM_WIN32(ERROR_TIMEOUT))
-        return Error("定位超时，可重试或手动填写。", ErrorKind::Validation);
-    return Error("暂时无法定位，可重试或手动填写。", ErrorKind::Validation);
+        return Error(i18n::tr("error.location_timeout"), ErrorKind::Validation);
+    return Error(i18n::tr("error.location_unavailable"), ErrorKind::Validation);
 }
 }
 std::wstring coordinateText(double value, CoordinateFormat format) {
-    if (!std::isfinite(value)) throw Error("坐标无效。", ErrorKind::Validation);
+    if (!std::isfinite(value)) throw Error(i18n::tr("error.coords_invalid"), ErrorKind::Validation);
     char buffer[64]{};
     const auto result = format == CoordinateFormat::Full
         ? std::to_chars(buffer, buffer + sizeof(buffer), value)
         : std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::fixed, 6);
-    if (result.ec != std::errc{}) throw Error("无法显示坐标。", ErrorKind::Validation);
+    if (result.ec != std::errc{}) throw Error(i18n::tr("error.coords_display"), ErrorKind::Validation);
     return wide(std::string(buffer, result.ptr));
 }
 struct LocationReader::Impl {
@@ -60,14 +60,14 @@ std::optional<LocationFix> LocationReader::poll() {
     if (!impl_) return {};
     try {
         if (GetTickCount64() - impl_->started >= 60000)
-            throw Error("定位超时，可重试或手动填写。", ErrorKind::Validation);
+            throw Error(i18n::tr("error.location_timeout"), ErrorKind::Validation);
         if (impl_->access) {
             if (impl_->access.Status() == AsyncStatus::Started) return {};
             const auto status = impl_->access.GetResults();
             impl_->access = nullptr;
             if (status == GeolocationAccessStatus::Denied) throw locationError(E_ACCESSDENIED);
             if (status != GeolocationAccessStatus::Allowed)
-                throw Error("Windows 定位尚未就绪，可重试或手动填写。", ErrorKind::Validation);
+                throw Error(i18n::tr("error.location_not_ready"), ErrorKind::Validation);
             impl_->locator = Geolocator();
             impl_->locator.DesiredAccuracy(PositionAccuracy::Default);
             // Reuse a recent fix for responsiveness and bound the wait for a new one.
@@ -81,8 +81,8 @@ std::optional<LocationFix> LocationReader::poll() {
             fix = {point.Latitude, point.Longitude, coordinate.Accuracy(),
                    coordinate.PositionSource() == PositionSource::Default};
         }
-        if (!validLocation({"当前位置", fix.latitude, fix.longitude}) || !std::isfinite(fix.accuracy) || fix.accuracy < 0)
-            throw Error("Windows 返回了无效位置，可重试或手动填写。", ErrorKind::Validation);
+        if (!validLocation({"location", fix.latitude, fix.longitude}) || !std::isfinite(fix.accuracy) || fix.accuracy < 0)
+            throw Error(i18n::tr("error.location_bad_os_return"), ErrorKind::Validation);
         cancel();
         return fix;
     } catch (const winrt::hresult_error& error) {

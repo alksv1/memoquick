@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include "i18n.hpp"
 
 namespace mq {
 enum class ErrorKind { Validation, Network, Auth, Protocol, Storage, Http, LocationDenied };
@@ -89,6 +90,7 @@ struct Config {
     bool startAtLogin = false;
     bool dark = false;
     std::string geocodingEndpoint = "https://nominatim.openstreetmap.org/reverse";
+    std::string language;
     bool operator==(const Config&) const = default;
 };
 struct HttpResponse {

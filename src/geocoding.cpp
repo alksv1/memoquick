@@ -14,14 +14,14 @@ using namespace winrt::Windows::Storage::Streams;
 using namespace winrt::Windows::Web::Http;
 using namespace winrt::Windows::Web::Http::Filters;
 namespace {
-Error lookupError() { return Error("地名查询失败，坐标已保留，可手动填写名称。", ErrorKind::Network); }
+Error lookupError() { return Error(i18n::tr("error.geocoding_failed"), ErrorKind::Network); }
 }
 std::string geocodingUrl(const std::string& endpoint, double latitude, double longitude) {
     const auto input = trim(endpoint);
     const auto server = parseServer(input);
     if (!server.secure && server.host != L"127.0.0.1" && server.host != L"localhost" && server.host != L"[::1]")
-        throw Error("地名服务请使用 HTTPS 地址。", ErrorKind::Validation);
-    if (!validLocation({"位置", latitude, longitude})) throw Error("坐标无效。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.geocoding_https"), ErrorKind::Validation);
+    if (!validLocation({"位置", latitude, longitude})) throw Error(i18n::tr("error.coords_invalid"), ErrorKind::Validation);
     return input + "?format=json&accept-language=zh-CN&lat=" + utf8(coordinateText(latitude, CoordinateFormat::Rounded))
         + "&lon=" + utf8(coordinateText(longitude, CoordinateFormat::Rounded));
 }
@@ -66,7 +66,7 @@ void LocationNames::start(const std::string& endpoint, double latitude, double l
     if (cached != cache_.end()) { ready_ = cached->second; return; }
     // User-triggered lookups only; never retry or send more than one per second.
     const auto now = GetTickCount64();
-    if (lastRequest_ && now - lastRequest_ < 1000) throw Error("请稍后重试地名查询，坐标已保留。", ErrorKind::Validation);
+    if (lastRequest_ && now - lastRequest_ < 1000) throw Error(i18n::tr("error.geocoding_rate"), ErrorKind::Validation);
     lastRequest_ = now;
     try {
         auto next = std::make_unique<Impl>();

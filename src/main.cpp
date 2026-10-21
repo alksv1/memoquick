@@ -282,12 +282,15 @@ public:
             require(IsWindowVisible(GetDlgItem(handle, mq::ThemeButton)) && IsWindowVisible(GetDlgItem(handle, mq::CloseButton)), "Settings lost header actions");
             require(IsWindowVisible(GetDlgItem(handle, mq::BrowserButton)), "Settings lost account actions");
             require(!IsWindowVisible(GetDlgItem(handle, mq::MdBold)), "Settings contains Markdown toolbar");
+            require(IsWindowVisible(GetDlgItem(handle, mq::LanguageInput)), "Settings lost language selector");
+            verifyMenu(window_, mq::LanguageInput, true, false, output_ / L"language-menu-dark.bmp");
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
             require(!store_.config().dark, "Light mode was not saved");
             stage_ = 4;
         } else if (stage_ == 4) {
             UpdateWindow(handle);
             screenshot(handle, output_ / L"settings-light.bmp");
+            verifyMenu(window_, mq::LanguageInput, false, false, output_ / L"language-menu-light.bmp");
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::BackButton, BN_CLICKED), 0);
             require(window_.currentDraft() == draft_, "Settings changed draft");
             SendMessageW(GetDlgItem(handle, mq::Editor), EM_SETSEL, static_cast<WPARAM>(-1), -1);
@@ -323,7 +326,7 @@ public:
             window_.fillLocation({0,0,250,false});
             wchar_t locationLabel[64]{};
             GetWindowTextW(GetDlgItem(handle,mq::LocationName),locationLabel,64);
-            require(std::wstring(locationLabel) == L"当前位置", "Automatic location did not supply a default name");
+            require(std::wstring(locationLabel) == mq::i18n::trW("location.current"), "Automatic location did not supply a default name");
             window_.fillLocationName("中国，广东省，深圳市，南山区");
             GetWindowTextW(GetDlgItem(handle,mq::LocationName),locationLabel,64);
             require(std::wstring(locationLabel) == L"中国，广东省，深圳市，南山区", "Address did not replace the automatic name");
@@ -331,7 +334,7 @@ public:
             SetWindowTextW(GetDlgItem(handle,mq::LatitudeInput),L"1");
             window_.fillLocationName("过期坐标的地名");
             GetWindowTextW(GetDlgItem(handle,mq::LocationName),locationLabel,64);
-            require(std::wstring(locationLabel) == L"当前位置", "Stale coordinates changed the name");
+            require(std::wstring(locationLabel) == mq::i18n::trW("location.current"), "Stale coordinates changed the name");
             window_.fillLocation({0,0,250,false});
             SetWindowTextW(GetDlgItem(handle,mq::LocationName),L"我的位置");
             window_.fillLocationName("迟到的地名");
@@ -352,7 +355,7 @@ public:
             window_.fillLocationName("中国，广东省，深圳市");
             GetWindowTextW(GetDlgItem(handle,mq::LocationName),locationLabel,64);
             require(std::wstring(locationLabel) == L"书桌", "Address lookup overwrote an existing name");
-            require(window_.notice() == "精度约 120 米", "Location accuracy was not shown");
+            require(window_.notice() == mq::i18n::trFormat("location.accuracy", "120"), "Location accuracy was not shown");
             wchar_t latitude[64]{}, longitude[64]{};
             GetWindowTextW(GetDlgItem(handle,mq::LatitudeInput),latitude,64);
             GetWindowTextW(GetDlgItem(handle,mq::LongitudeInput),longitude,64);
@@ -362,7 +365,7 @@ public:
             screenshot(handle,output_ / L"location-dark.bmp");
             SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::ThemeButton,BN_CLICKED),0);
             window_.fillLocation({22.3,114.2,120,true});
-            require(window_.notice() == "Windows 默认位置，请核对。", "Default Windows location was presented as an actual fix");
+            require(window_.notice() == mq::i18n::tr("location.default_pos"), "Default Windows location was presented as an actual fix");
             SendMessageW(handle,WM_COMMAND,MAKEWPARAM(mq::PanelConfirm,BN_CLICKED),0);
             require(window_.currentDraft().location == mq::Location{"书桌",22.3,114.2}, "Location confirmation lost coordinates");
             require(window_.currentDraft().content == draft_.content, "Location panel changed editor content");
@@ -526,7 +529,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                 << ",\"width\":" << (bounds.right - bounds.left) << ",\"height\":" << (bounds.bottom - bounds.top)
                 << ",\"right\":" << bounds.right << ",\"bottom\":" << bounds.bottom
                 << ",\"workLeft\":" << monitor.rcWork.left << ",\"workTop\":" << monitor.rcWork.top
-                << ",\"workRight\":" << monitor.rcWork.right << ",\"workBottom\":" << monitor.rcWork.bottom << '}';
+                << ",\"workRight\":" << monitor.rcWork.right << ",\"workBottom\":" << monitor.rcWork.bottom
+                << ",\"language\":\"" << mq::i18n::currentLanguage() << "\""
+                << ",\"configuredLanguage\":\"" << mq::i18n::configuredLanguage() << "\"}";
             require(report.good(), "Position report failed");
             DestroyWindow(window.handle());
         }
@@ -557,7 +562,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         if (smoke || checkPosition || checkSession) {
             std::filesystem::create_directories(output);
             std::ofstream(output / L"failure.txt") << error.what();
-        } else MessageBoxW(nullptr, mq::wide(error.what()).c_str(), L"MemoQuick 无法启动", MB_OK | MB_ICONERROR);
+        } else MessageBoxW(nullptr, mq::wide(error.what()).c_str(), mq::i18n::trW("notice.cant_start").c_str(), MB_OK | MB_ICONERROR);
     }
     if (mutex) CloseHandle(mutex);
     if (SUCCEEDED(com)) OleUninitialize();

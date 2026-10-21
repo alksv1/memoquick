@@ -1,6 +1,6 @@
 # MemoQuick
 
-独立的 Memos 快速记录工具，当前版本 **0.2.5**。C++20 + Win32 原生窗口，直接连接已有 Memos 服务。
+独立的 Memos 快速记录工具，当前版本 **0.2.6**。C++20 + Win32 原生窗口，直接连接已有 Memos 服务。
 不依赖 Memospot、Electron、WebView、Node.js、Python 或 .NET 运行时。
 
 ## 使用
@@ -15,7 +15,7 @@
 提交失败时保留内容。超时、连接中断或服务器错误后不会自动重复提交，先去 Memos 确认保存结果再重试。
 输入法正在组词时，Enter 不会触发提交。
 
-设置中可修改全局快捷键、启用登录 Windows 时启动、退出登录或切换服务。
+设置中可修改全局快捷键、界面语言（默认跟随系统，支持简体中文与 English 手动选择并持久化）、启用登录 Windows 时启动、退出登录或切换服务。
 开机启动在后台运行，用快捷键或托盘打开；Windows 可能延迟启动。便携版请保存在固定目录，移动程序后手动打开一次可修正启动路径。
 0.2.2 修复新版本 Memos 的登录凭据保存；从更早版本升级后需重新登录一次，之后自动恢复。网络未就绪时会自动重试恢复。
 主界面为 420 × 280 的紧凑输入窗，拖动顶栏移动，拖动边缘调整大小。
@@ -96,7 +96,7 @@ Windows 需允许桌面应用访问麦克风；无设备或权限不足会显示
 
 数据默认保存在 `%LOCALAPPDATA%\MemoQuick`：
 
-- `settings.json`：服务地址、快捷键、开机启动偏好与明暗主题。
+- `settings.json`：服务地址、快捷键、开机启动偏好、界面语言与明暗主题。
 - `window.json`：窗口位置与尺寸，支持多显示器的负坐标。
 - `private.bin`：Windows DPAPI 加密的刷新会话和草稿，绑定当前 Windows 用户。
 - `attachments/*.bin`：Windows DPAPI 加密的附件与录音缓存，绑定服务和账号。
@@ -152,6 +152,7 @@ ctest --test-dir build -C Release --output-on-failure
 | --- | --- |
 | `src/core.cpp` | WinHTTP 网络、Memos API、会话续期与 Cookie |
 | `src/storage.cpp` | DPAPI、原子文件保存与开机启动 |
+| `src/i18n.cpp` | 界面国际化、多语言字典、系统语言检测与回退 |
 | `src/markdown.cpp` | Markdown 选区、行前格式与代码语法 |
 | `src/window.cpp` | 原生控件、托盘、全局快捷键、后台工作线程 |
 | `src/main.cpp` | 进程入口、单实例与桌面测试 |
