@@ -1,119 +1,120 @@
 # MemoQuick
 
-独立的 Memos 快速记录工具，当前版本 **0.2.6**。C++20 + Win32 原生窗口，直接连接已有 Memos 服务。
-不依赖 Memospot、Electron、WebView、Node.js、Python 或 .NET 运行时。
+English | [简体中文](README_zh.md)
 
-## 使用
+A standalone quick-capture tool for Memos, current version **0.2.6**. Native C++20 + Win32 window connecting directly to an existing Memos instance.
+No dependencies on Memospot, Electron, WebView, Node.js, Python, or .NET runtimes.
 
-1. 从 [Releases](https://github.com/alksv1/memoquick/releases) 下载 Windows x64 的 EXE，或解压便携 ZIP 后运行 `MemoQuick.exe`。
-2. 填写 Memos 服务地址、用户名和密码，登录一次。
-3. 在任意应用按 **Ctrl + Alt + M** 呼出小窗，直接输入内容。
-   再按一次相同快捷键收起小窗，未提交的草稿会保留；最小化时按快捷键恢复窗口。
-4. 点击保存或按 **Ctrl + Enter**；保存成功后小窗自动收起到托盘。
+## Usage
 
-`Esc`、窗口关闭按钮和托盘都可以收起或重新打开窗口。草稿自动保留，重启后恢复；
-提交失败时保留内容。超时、连接中断或服务器错误后不会自动重复提交，先去 Memos 确认保存结果再重试。
-输入法正在组词时，Enter 不会触发提交。
+1. Download the Windows x64 executable or portable ZIP from [Releases](https://github.com/alksv1/memoquick/releases) and run `MemoQuick.exe`.
+2. Enter the Memos server URL, username, and password, then sign in once.
+3. Press **Ctrl + Alt + M** from any application to summon the compact window and start typing immediately.
+   Press the same hotkey again to hide the window; uncommitted drafts are automatically preserved. Press the hotkey while minimized to restore the window.
+4. Click Save or press **Ctrl + Enter**; once saved successfully, the window automatically minimizes to the system tray.
 
-设置中可修改全局快捷键、界面语言（默认跟随系统，支持简体中文与 English 手动选择并持久化）、启用登录 Windows 时启动、退出登录或切换服务。
-开机启动在后台运行，用快捷键或托盘打开；Windows 可能延迟启动。便携版请保存在固定目录，移动程序后手动打开一次可修正启动路径。
-0.2.2 修复新版本 Memos 的登录凭据保存；从更早版本升级后需重新登录一次，之后自动恢复。网络未就绪时会自动重试恢复。
-主界面为 420 × 280 的紧凑输入窗，拖动顶栏移动，拖动边缘调整大小。
-自动记住窗口位置与尺寸，收起后呼出或重启程序仍在原处并保持设定大小；显示器布局变化时自动移回可见区域。
-顶栏 **Light / Dark** 按钮一键切换明暗主题，自动记住选择；**···** 打开设置。
-保存快捷键仍为 **Ctrl + Enter**，操作提示在按钮悬停时显示。
-快捷键冲突时仍可从托盘打开，再到设置选择其他组合。
-默认新记录为「仅自己」，也可选择已登录用户可见或公开。
+`Esc`, the window close button, and the system tray icon can all collapse or reopen the window. Drafts are preserved automatically and restored across restarts.
+Failed submissions retain draft content. The app does not automatically replay writes after timeouts, connection interruptions, or server errors—verify on Memos before retrying.
+Enter does not trigger submission while an IME composition is in progress.
 
-## Markdown 工具
+In Settings, you can configure the global hotkey, interface language (defaults to system UI language, with manual selection for Simplified Chinese and English), launch on Windows startup, sign out, or switch server address.
+Startup runs silently in the background, opened via hotkey or tray icon. For the portable version, keep it in a fixed directory; launching it manually once after moving repairs the startup path.
+0.2.2 fixed credential persistence for newer Memos versions; after upgrading from older versions, sign in once to restore automatic session renewal.
+The main interface is a compact 420 × 280 window. Drag the top bar to move, or drag edges to resize.
+Window position and size are remembered across restarts and restored automatically; when monitor layout changes, the window automatically moves back to the visible work area.
+The top-bar **Light / Dark** button toggles themes with instant persistence; **···** opens Settings.
+The save shortcut is **Ctrl + Enter**, with tooltip hints displayed on hover.
+If a hotkey conflicts with another application, you can still open MemoQuick from the tray and pick a different shortcut in Settings.
+Default visibility for new memos is "Only Me", with options for signed-in users or public.
 
-输入区上方的小工具栏支持选区格式化；未选中文字时插入占位内容，列表、标题和引用作用于当前行或选中的整行。
-加粗、斜体及行前格式可再次点击取消；列表之间可直接转换，格式操作可用 **Ctrl + Z** 撤销。
-链接插入后自动选中地址，直接粘贴 URL 即可。仅编辑 Markdown 源文本，不自动上传或打开链接。
+## Markdown Tools
 
-| 工具 | 快捷键 |
+The toolbar above the text area supports selection formatting; when no text is selected, it inserts placeholder text. List, heading, and quote tools apply to the current line or full selected lines.
+Bold, italic, and line prefixes can be clicked again to cancel. Lists can be converted directly into other list types, and formatting operations can be undone with **Ctrl + Z**.
+When inserting a link, the URL placeholder is selected automatically—just paste your URL. Only Markdown source text is edited; links are not uploaded or opened automatically.
+
+| Tool | Shortcut |
 | --- | --- |
-| 加粗 / 斜体 | Ctrl + B / Ctrl + I |
-| 二级标题 | Ctrl + Shift + H |
-| 链接 | Ctrl + K |
-| 无序 / 有序列表 | Ctrl + Shift + L / Ctrl + Shift + O |
-| 待办 / 引用 | Ctrl + Shift + T / Ctrl + Shift + Q |
-| 行内代码 / 代码块 | Ctrl + E / Ctrl + Shift + C |
+| Bold / Italic | Ctrl + B / Ctrl + I |
+| Heading 2 | Ctrl + Shift + H |
+| Link | Ctrl + K |
+| Bullet / Numbered List | Ctrl + Shift + L / Ctrl + Shift + O |
+| To-do / Quote | Ctrl + Shift + T / Ctrl + Shift + Q |
+| Inline Code / Code Block | Ctrl + E / Ctrl + Shift + C |
 
-工具栏按钮悬停显示用途与快捷键，输入法组词时不会触发格式快捷键。
+Toolbar buttons show usage and shortcuts on hover. Shortcuts are suppressed while IME composition is active.
 
-## 添加内容
+## Adding Content
 
-底部 **＋** 菜单提供五种操作，主编辑区保持紧凑：
+The bottom **＋** menu provides five actions while keeping the main editor compact:
 
-| 操作 | 行为 |
+| Action | Behavior |
 | --- | --- |
-| 添加附件 | 多选本地文件，保存 Memo 时上传并绑定到记录，可只保存附件而不写正文。 |
-| 插入图片 | 多选图片，上传后在光标位置插入 Markdown 图片，同时绑定到记录。 |
-| 录音 | 点击开始、停止、试听，然后添加到草稿；保存 Memo 时上传为音频附件。 |
-| 关联 Memo | 搜索并分页浏览自己未归档的记录，建立正式 `REFERENCE` 关系，已关联项不重复展示。 |
-| 添加位置 | 输入位置名称、纬度和经度，保存结构化位置，可在 Memos 的地图中查看。 |
+| Add Attachment | Multi-select local files; uploaded and bound when saving. Notes can consist of attachments alone. |
+| Insert Image | Multi-select images; uploads and inserts Markdown image syntax at cursor while binding to note. |
+| Record Audio | Click to start, stop, preview, and add to draft; uploaded as a WAV attachment when saving. |
+| Link Memo | Search and paginate through your non-archived memos to establish a formal `REFERENCE` relation. |
+| Add Location | Enter location name, latitude, and longitude; saved as structured location viewable on Memos map. |
 
-在编辑区按 **Ctrl + V** 或 **Shift + Insert**，可直接粘贴截图、复制的图片、文件管理器中的文件，以及提供标准 OLE 文件数据的应用附件。
-图片自动上传并在光标处插入 Markdown；其他文件加入附件，手动保存 Memo 时上传。普通文字继续按原样粘贴，保留原生撤销。
-无需先另存为文件再选择；截图在内存中编码为 PNG，透明 PNG 保留原始数据，不生成明文临时图片。未提交附件沿用 Windows DPAPI 加密草稿缓存，退出重开仍可恢复。
-一次粘贴的批次完整读取并保存后才上传；读取失败不会加入半批附件，上传失败则保留可重试草稿。复制和剪切的源文件均不会删除。
-支持 PNG、DIB / DIBV5 和 Windows 位图；单次粘贴最多 32 个文件、总量 64 MiB，单文件 20 MiB，位图约 1600 万像素以内。文件夹及应用私有的剪贴板格式暂不支持。
+Press **Ctrl + V** or **Shift + Insert** in the editor to directly paste screenshots, copied images, files from File Explorer, or standard OLE clipboard attachments.
+Images upload automatically and insert Markdown at the cursor; other files are added as attachments and uploaded when manually saving. Plain text pastes normally with native undo preserved.
+No need to save to a file first. Screenshots are encoded in memory as PNG; transparent PNGs preserve raw alpha channels without generating plaintext temporary files. Uncommitted attachments use Windows DPAPI encrypted draft caching, surviving application restarts.
+A pasted batch is read and saved completely before starting any upload; failed reads do not add half-batches, and failed uploads retain retryable drafts. Source files from copy/cut are never modified or deleted.
+Supports PNG, DIB / DIBV5, and Windows bitmaps; up to 32 files per paste, 64 MiB total batch limit, 20 MiB per file, and up to ~16 megapixels for bitmaps. Folders and private application clipboard formats are not supported.
 
-附件、关联和位置的摘要显示在底部；点击摘要可移除项目、编辑位置或重试上传。
-图片上传过程中暂停编辑，避免插入位置错乱。普通附件和录音在手动保存时上传。
-上传部分成功后失败，再次保存只上传剩余文件；成功上传的引用也会随草稿恢复。
+A summary of attachments, links, and location appears at the bottom; click the summary to remove items, edit location, or retry uploads.
+Editor input is paused during image upload to prevent cursor position misalignment. Normal attachments and audio recordings upload during manual memo save.
+If an upload partially succeeds and fails, saving again only uploads the remaining pending files; successfully uploaded references are restored with drafts.
 
-单个附件上限 **20 MiB**、每条记录最多 **32 个附件 / 32 个关联**，还受服务端自身限制。
-录音使用 Windows 默认麦克风，格式为 16 kHz 单声道 PCM WAV，每段最长 **5 分钟**；
-达到上限自动停止，可试听后添加。录音时收起窗口会停止并加入加密草稿，取消则丢弃本段录音。
-Windows 需允许桌面应用访问麦克风；无设备或权限不足会显示错误。
+Individual attachments are capped at **20 MiB**, with a maximum of **32 attachments / 32 links** per memo (subject to server limits).
+Audio recording uses the default Windows microphone in 16 kHz mono PCM WAV, with each segment capped at **5 minutes**.
+Recording automatically stops at the limit and can be previewed before adding. Collapsing the window while recording stops and caches the audio in encrypted drafts; cancelling discards the segment.
+Windows must permit desktop applications to access the microphone; missing devices or insufficient permissions display an error.
 
-附件与录音在本地以 DPAPI 加密缓存，不依赖原文件保持在原处。确认保存成功后清理相关本地缓存。
-插入图片会在提交 Memo 之前上传文件；移除或放弃已上传文件不会自动删除服务器文件，
-可在 Memos 的附件库中清理未使用附件。关联不改变原记录的访问权限；位置随记录的可见范围展示。
-位置面板点击「当前位置」可通过 Windows 定位自动填入经纬度，显示大致精度；确认后才附到记录。
-首次使用需允许 Windows 位置权限，未开启时可点「定位设置」；定位过程中可取消，收起或离开面板也会停止请求。
-定位后自动查询地址名称，保留你手动输入的名称；地名服务不可用时保留坐标，仍可手动填写。
-地名查询沿用 Memos 的 [Nominatim](https://github.com/usememos/memos/blob/v0.31.0/web/src/components/map/useReverseGeocoding.ts) 方式，将坐标发送给 OpenStreetMap，不发送 Memos 登录凭据、笔记或账号。
-在设置的「地名服务」中可替换为兼容 Nominatim 的 HTTPS reverse 接口地址，留空可停用。仅本机测试服务允许 HTTP，不支持地址中的账号、查询参数或片段。
-公共服务需遵守 [Nominatim 使用规则](https://operations.osmfoundation.org/policies/nominatim/)：用户主动触发、低频查询、总流量不超过每秒一次、缓存结果、显示来源，并可按要求切换服务。应用每次运行缓存最多 100 个成功结果；大规模分发需改用自建或商业服务。
-查询可取消，8 秒后结束等待；无自动重试或后台定位，不包含地图选点。录音不包含 AI 转写。
+Attachments and recordings are cached locally using DPAPI encryption without depending on original files remaining in place. Local cache is cleaned up after confirmed save.
+Inserted images upload before memo creation; removing or abandoning uploaded files does not delete server files—unused attachments can be cleaned in Memos attachment storage. Linking does not modify original memo permissions; location displays according to note visibility.
+Clicking "Current Location" in the location panel automatically fills coordinates via Windows location services and displays estimated accuracy; coordinates attach only upon confirmation.
+First-time use requires Windows location permissions; if disabled, click "Location Settings". Locating can be cancelled, and closing or leaving the panel cancels pending requests.
+Coordinates automatically query reverse geocoding for place names while preserving manual edits; if geocoding is unavailable, coordinates remain and names can be entered manually.
+Geocoding follows Memos [Nominatim](https://github.com/usememos/memos/blob/v0.31.0/web/src/components/map/useReverseGeocoding.ts) reverse-lookup convention, sending coordinates to OpenStreetMap without sending Memos credentials, notes, or accounts.
+In Settings, "Geocoding Service" can be replaced with any Nominatim-compatible HTTPS reverse endpoint, or left empty to disable. HTTP is allowed only for localhost testing; credentials, query parameters, or fragments in URLs are rejected.
+Public services must comply with [Nominatim Usage Policy](https://operations.osmfoundation.org/policies/nominatim/): user-triggered, low frequency, max 1 request per second, cached results, attribution displayed, and endpoint switchable. The app caches up to 100 successful lookups per session; large-scale deployments should use self-hosted or commercial endpoints.
+Lookups time out after 8 seconds and can be cancelled; no automatic retries or background tracking. No map point selection. Audio does not include AI transcription.
 
-行为依据见 [0.2.0 升级说明](RELEASE_NOTES.md)，版本升级自动兼容 0.1 的会话、草稿、主题与位置数据。
+See [Release Notes](RELEASE_NOTES.md) for detailed version upgrade notes. Version upgrades automatically preserve 0.1 sessions, drafts, themes, and location data.
 
-## 环境与边界
+## Environment & Boundaries
 
-- Windows 10 / 11 x64。
-- 连接已有的 **Memos 0.26 或更新版本**，服务需要允许用户名与密码登录。
-- 自动识别 `/api/v1` 与新版 `/api` 路径，支持反向代理的子路径。
-- 当前版本不提供 SSO 登录、Markdown 预览或本地 Memos 服务。
-- 不能继承其他客户端的登录状态；首次在本工具登录一次，后续自动续期。
-- 「打开 Memos」使用系统浏览器，浏览器有自己的登录状态。
-- HTTPS 使用 Windows 证书验证，服务地址需是最终地址，不自动跟随重定向。
+- Windows 10 / 11 x64.
+- Connects to an existing **Memos 0.26 or newer** instance supporting username and password sign-in.
+- Automatically detects `/api/v1` and newer `/api` routes, including reverse proxy subpaths.
+- Current version does not provide SSO login, Markdown preview, or local embedded Memos server.
+- Cannot inherit session state from other clients; sign in once in MemoQuick, with automatic renewals thereafter.
+- "Open Memos" uses the default system browser with its own session state.
+- HTTPS uses Windows certificate validation; server address must be the final destination without following redirects.
 
-## 数据
+## Data Storage
 
-数据默认保存在 `%LOCALAPPDATA%\MemoQuick`：
+Data is stored by default in `%LOCALAPPDATA%\MemoQuick`:
 
-- `settings.json`：服务地址、快捷键、开机启动偏好、界面语言与明暗主题。
-- `window.json`：窗口位置与尺寸，支持多显示器的负坐标。
-- `private.bin`：Windows DPAPI 加密的刷新会话和草稿，绑定当前 Windows 用户。
-- `attachments/*.bin`：Windows DPAPI 加密的附件与录音缓存，绑定服务和账号。
+- `settings.json`: Server address, hotkey, startup preference, interface language, and theme.
+- `window.json`: Window position and dimensions, supporting negative coordinates on multi-monitor setups.
+- `private.bin`: Windows DPAPI encrypted refresh sessions and drafts, bound to the current Windows user.
+- `attachments/*.bin`: Windows DPAPI encrypted attachment and audio cache, isolated by server and user account.
 
-不保存密码。短期访问令牌仅存在于进程内存中；退出程序后消失，之后用加密保存的刷新会话恢复。
-草稿按服务地址和账号分别保存，切换账号不会混用或删除其他账号的草稿。
-数据无法解密或损坏时保留原文件并报告错误，不覆盖它。
+Passwords are not stored. Short-lived access tokens exist only in memory, cleared on exit, and restored using encrypted refresh sessions.
+Drafts are saved separately by server URL and username; switching accounts does not mix or delete other drafts.
+Corrupted or undecryptable data files are preserved with errors reported, never overwritten.
 
-## 从源码构建
+## Building from Source
 
-安装 Visual Studio 2022 或 2026 的「使用 C++ 的桌面开发」组件，包括 CMake 与 Windows SDK。
+Requires Visual Studio 2022 or 2026 with the "Desktop development with C++" workload, including CMake and Windows SDK.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Test
 ```
 
-也可在 Visual Studio Developer PowerShell 中使用 CMake：
+Or using CMake in Visual Studio Developer PowerShell:
 
 ```powershell
 cmake -S . -B build -A x64
@@ -121,40 +122,36 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-成品静态链接 MSVC C++ 运行库，可单独分发一个 `MemoQuick.exe`。
-源码附带固定版本 nlohmann/json 单头文件，构建不需要联网下载依赖。
-测试中的真实 HTTP 接口和窗口验证使用 Python 3.9+ 标准库；Python 不参与程序运行。
+The output statically links the MSVC C++ runtime, producing a self-contained single `MemoQuick.exe`.
+Bundles a pinned single-header nlohmann/json; no external network downloads required during build.
+Integration tests use the Python 3.9+ standard library; Python is not required for application runtime.
 
-## 自动发布
+## Automated Releases
 
-[Release Windows](https://github.com/alksv1/memoquick/actions/workflows/release.yml) 在推送 `v0.2.3` 这样的版本标签后自动编译并发布。
-标签必须对应已有提交，并与 `CMakeLists.txt` 和程序资源中的版本一致；带 `-rc.1` 等后缀的标签发布为预发行版。
-也可在 Actions 页面选择 **Run workflow**，填写已有标签，为旧版本补发 Release，无需移动标签。
+[Release Windows](https://github.com/alksv1/memoquick/actions/workflows/release.yml) automatically compiles and publishes releases when a version tag like `v0.2.6` is pushed.
+Tags must correspond to an existing commit and match the version in `CMakeLists.txt` and application resources; tags with suffixes like `-rc.1` publish as prereleases.
+You can also trigger **Run workflow** on the Actions page with an existing tag to publish for older commits without moving tags.
 
-工作流使用 Windows x64 / MSVC Release 构建，核心与新旧 API 测试通过后生成 EXE、包含许可证的便携 ZIP 和 `SHA256SUMS.txt`。
-先上传到 Release 草稿，全部成功后公开发布；失败可重跑，已公开的 Release 保留原有文件。
-仅使用仓库自动提供的 `GITHUB_TOKEN`，无需配置额外密钥。
-云端运行核心和真实本机 HTTP 接口测试，截图、焦点及窗口交互测试需在有交互桌面的 Windows 上运行完整测试。
+The workflow builds on Windows x64 / MSVC Release, runs core and real HTTP API tests, then packages the EXE, portable ZIP with licenses, and `SHA256SUMS.txt`.
+Drafts are created first and published only after all jobs succeed. Uses default repository `GITHUB_TOKEN` without additional secret configuration.
 
-## 验证
+## Verification
 
-单元测试覆盖 Unicode、URL、Cookie 路径与轮换、DPAPI 加密、防篡改、草稿与账号隔离、损坏数据保护。
-集成测试使用本机隔离 HTTP 服务，验证登录、重启恢复、401 自动续期、新旧 API、失败和超时不重复提交。
-原生窗口测试覆盖登录表单、草稿保留、失败提示、保存成功收起、快捷键消息唤出、明暗主题切换与草稿保持；
-它会输出截图及运行时指标到 `test-output/`。
-窗口位置与尺寸测试覆盖拖动保存、收起呼出、独立进程重启、屏幕外恢复和负坐标持久化。
+Unit tests cover Unicode, URLs, Cookie paths and rotation, DPAPI encryption, tamper protection, draft and account isolation, and corrupted data protection.
+Integration tests use an isolated local HTTP service to verify login, restart recovery, 401 automatic renewal, legacy and new APIs, and non-repeating failures.
+Native window tests cover login form, draft preservation, failure notices, close-on-success, hotkey summoning, theme toggling, and multi-language menus;
+screenshots and runtime metrics are saved to `test-output/`.
+Window position and dimension tests cover drag persistence, minimize/restore, independent process restarts, offscreen recovery, and negative coordinate persistence.
 
-真实公网服务、系统输入法、不同 DPI 显示器及实际键盘快捷键仍需按使用环境确认。
+## Architecture
 
-## 实现
-
-| 文件 | 职责 |
+| File | Responsibility |
 | --- | --- |
-| `src/core.cpp` | WinHTTP 网络、Memos API、会话续期与 Cookie |
-| `src/storage.cpp` | DPAPI、原子文件保存与开机启动 |
-| `src/i18n.cpp` | 界面国际化、多语言字典、系统语言检测与回退 |
-| `src/markdown.cpp` | Markdown 选区、行前格式与代码语法 |
-| `src/window.cpp` | 原生控件、托盘、全局快捷键、后台工作线程 |
-| `src/main.cpp` | 进程入口、单实例与桌面测试 |
+| `src/core.cpp` | WinHTTP networking, Memos API, session renewal, and Cookies |
+| `src/storage.cpp` | DPAPI, atomic file writes, and startup registration |
+| `src/i18n.cpp` | Internationalization, multi-language dictionaries, system detection, and fallbacks |
+| `src/markdown.cpp` | Markdown selections, line prefixes, and syntax |
+| `src/window.cpp` | Native controls, system tray, global hotkeys, and background worker threads |
+| `src/main.cpp` | Process entry point, single-instance mutex, and desktop tests |
 
-项目采用 MIT 许可证，第三方许可见 `THIRD_PARTY.md`。
+Released under the MIT License. Third-party licenses in `THIRD_PARTY.md`.
