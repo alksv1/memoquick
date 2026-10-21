@@ -11,12 +11,12 @@ using Json = nlohmann::json;
 namespace {
 std::vector<unsigned char> readFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) throw Error("无法读取本地数据文件，原文件已保留。", ErrorKind::Storage);
+    if (!file) throw Error(i18n::tr("error.read_local_file"), ErrorKind::Storage);
     const auto size = file.tellg();
-    if (size < 0 || size > 64 * 1024 * 1024) throw Error("本地数据文件大小异常，原文件已保留。", ErrorKind::Storage);
+    if (size < 0 || size > 64 * 1024 * 1024) throw Error(i18n::tr("error.local_file_size"), ErrorKind::Storage);
     std::vector<unsigned char> data(static_cast<size_t>(size));
     file.seekg(0);
-    if (!file.read(reinterpret_cast<char*>(data.data()), size)) throw Error("读取本地数据失败，原文件已保留。", ErrorKind::Storage);
+    if (!file.read(reinterpret_cast<char*>(data.data()), size)) throw Error(i18n::tr("error.read_local_failed"), ErrorKind::Storage);
     return data;
 }
 void atomicWrite(const std::filesystem::path& path, const std::vector<unsigned char>& bytes) {
@@ -24,14 +24,14 @@ void atomicWrite(const std::filesystem::path& path, const std::vector<unsigned c
     auto temporary = path;
     temporary += L".tmp-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(sequence++);
     HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) throw Error("无法写入本地数据，请检查磁盘空间和目录权限。", ErrorKind::Storage);
+    if (file == INVALID_HANDLE_VALUE) throw Error(i18n::tr("error.cant_write_local"), ErrorKind::Storage);
     DWORD written = 0;
     const bool ok = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) &&
         written == bytes.size() && FlushFileBuffers(file);
     CloseHandle(file);
     if (!ok || !MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         DeleteFileW(temporary.c_str());
-        throw Error("本地数据保存失败，请检查磁盘空间和目录权限。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.save_local_failed"), ErrorKind::Storage);
     }
 }
 std::string keyFor(const std::string& server, const std::string& user) { return server + '\n' + user; }
@@ -41,7 +41,7 @@ std::vector<unsigned char> protect(const std::string& plain) {
     DATA_BLOB input{static_cast<DWORD>(plain.size()), reinterpret_cast<BYTE*>(const_cast<char*>(plain.data()))};
     DATA_BLOB output{};
     if (!CryptProtectData(&input, L"MemoQuick private data", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output)) {
-        throw Error("Windows 无法加密数据，请检查当前用户账户。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.encrypt_failed"), ErrorKind::Storage);
     }
     std::vector<unsigned char> result(output.pbData, output.pbData + output.cbData);
     LocalFree(output.pbData);
@@ -51,7 +51,7 @@ std::string unprotect(const std::vector<unsigned char>& encrypted) {
     DATA_BLOB input{static_cast<DWORD>(encrypted.size()), const_cast<BYTE*>(encrypted.data())};
     DATA_BLOB output{};
     if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output)) {
-        throw Error("无法解密会话或草稿，原文件已保留。请使用原 Windows 账户。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.decrypt_failed"), ErrorKind::Storage);
     }
     std::string result(reinterpret_cast<char*>(output.pbData), output.cbData);
     SecureZeroMemory(output.pbData, output.cbData);
@@ -61,7 +61,7 @@ std::string unprotect(const std::vector<unsigned char>& encrypted) {
 std::filesystem::path dataDirectory() {
     PWSTR location = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &location))) {
-        throw Error("无法找到用户数据目录。", ErrorKind::Storage);
+        throw Error(i18n::tr("error.no_data_dir"), ErrorKind::Storage);
     }
     const auto path = std::filesystem::path(location) / L"MemoQuick";
     CoTaskMemFree(location);
@@ -98,19 +98,20 @@ Store::Store(std::filesystem::path directory) : impl_(std::make_unique<Impl>()) 
             const auto value = Json::parse(bytes);
             impl_->config = { value.value("server", ""), value.value("modifiers", static_cast<unsigned>(MOD_CONTROL | MOD_ALT)),
                 value.value("key", static_cast<unsigned>('M')), value.value("startAtLogin", false), value.value("theme", "light") == "dark",
-                value.value("geocodingEndpoint", "https://nominatim.openstreetmap.org/reverse") };
+                value.value("geocodingEndpoint", "https://nominatim.openstreetmap.org/reverse"),
+                value.value("language", "") };
             if (!impl_->config.server.empty()) parseServer(impl_->config.server);
         }
         const auto privatePath = impl_->directory / L"private.bin";
         if (std::filesystem::exists(privatePath)) {
             const auto value = Json::parse(unprotect(readFile(privatePath)));
             if (!value.is_object() || !value.at("sessions").is_object() || !value.at("drafts").is_object()) {
-                throw Error("本地数据结构异常，原文件已保留。", ErrorKind::Storage);
+                throw Error(i18n::tr("error.local_data_corrupt"), ErrorKind::Storage);
             }
             impl_->privateData = value;
         }
     } catch (const Error&) { throw; }
-    catch (...) { throw Error("无法读取本地数据，原文件已保留。请先备份后检查。", ErrorKind::Storage); }
+    catch (...) { throw Error(i18n::tr("error.read_corrupt_backup"), ErrorKind::Storage); }
 }
 Store::~Store() = default;
 Config Store::config() const { std::lock_guard lock(impl_->mutex); return impl_->config; }
@@ -130,7 +131,15 @@ void Store::saveWindowPosition(WindowPosition position) {
     impl_->windowPosition = position;
 }
 void Store::saveConfig(const Config& config) {
-    const Json value = { {"server", config.server}, {"modifiers", config.modifiers}, {"key", config.key}, {"startAtLogin", config.startAtLogin}, {"theme", config.dark ? "dark" : "light"}, {"geocodingEndpoint", config.geocodingEndpoint} };
+    const Json value = {
+        {"server", config.server},
+        {"modifiers", config.modifiers},
+        {"key", config.key},
+        {"startAtLogin", config.startAtLogin},
+        {"theme", config.dark ? "dark" : "light"},
+        {"geocodingEndpoint", config.geocodingEndpoint},
+        {"language", config.language}
+    };
     const auto plain = value.dump(2);
     const std::vector<unsigned char> bytes(plain.begin(), plain.end());
     std::lock_guard lock(impl_->mutex);
@@ -147,11 +156,11 @@ std::vector<Cookie> Store::cookies(const std::string& server) const {
             Cookie cookie{value.at("name").get<std::string>(), value.at("value").get<std::string>(),
                 value.value("path", "/"), value.value("secure", false), value.value("expires", 0LL)};
             if (cookie.name.find_first_of("\r\n;=") != std::string::npos || cookie.value.find_first_of("\r\n;") != std::string::npos) {
-                throw Error("会话数据无效，请重新登录。", ErrorKind::Storage);
+                throw Error(i18n::tr("error.session_invalid"), ErrorKind::Storage);
             }
             result.push_back(std::move(cookie));
         }
-    } catch (const Json::exception&) { throw Error("会话数据异常，原文件已保留。", ErrorKind::Storage); }
+    } catch (const Json::exception&) { throw Error(i18n::tr("error.session_corrupt"), ErrorKind::Storage); }
     return result;
 }
 void Store::saveCookies(const std::string& server, const std::vector<Cookie>& cookies) {

@@ -22,7 +22,7 @@ std::string lower(std::string text) {
 }
 Json parseJson(const std::string& body) {
     const auto value = Json::parse(body, nullptr, false);
-    if (!value.is_object()) throw Error("服务返回了非 API 响应，请确认地址指向 Memos。", ErrorKind::Protocol);
+    if (!value.is_object()) throw Error(i18n::tr("error.non_api_response"), ErrorKind::Protocol);
     return value;
 }
 std::string field(const Json& value, const char* key) {
@@ -41,15 +41,15 @@ std::wstring queryHeader(HINTERNET handle, DWORD info, DWORD* index = nullptr) {
 }
 void networkError(bool creating) {
     throw Error(creating
-        ? "连接中断或超时，服务端可能已保存。请先到 Memos 确认再重试；草稿已保留。"
-        : "无法连接 Memos，请检查地址、网络、系统代理或 HTTPS 证书。", ErrorKind::Network);
+        ? i18n::tr("error.network_creating")
+        : i18n::tr("error.network_connect"), ErrorKind::Network);
 }
 } // namespace
 
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
     const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (!size) throw Error("文本不是有效的 UTF-8。", ErrorKind::Validation);
+    if (!size) throw Error(i18n::tr("error.invalid_utf8"), ErrorKind::Validation);
     std::wstring result(size, L'\0');
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), size);
     return result;
@@ -57,7 +57,7 @@ std::wstring wide(const std::string& text) {
 std::string utf8(const std::wstring& text) {
     if (text.empty()) return {};
     const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (!size) throw Error("文本包含无效字符。", ErrorKind::Validation);
+    if (!size) throw Error(i18n::tr("error.invalid_chars"), ErrorKind::Validation);
     std::string result(size, '\0');
     WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), size, nullptr, nullptr);
     return result;
@@ -76,7 +76,7 @@ Server parseServer(const std::string& value) {
     if (input.empty() || !WinHttpCrackUrl(input.c_str(), 0, 0, &parts) ||
         (parts.nScheme != INTERNET_SCHEME_HTTP && parts.nScheme != INTERNET_SCHEME_HTTPS) ||
         !parts.dwHostNameLength || parts.dwUserNameLength || parts.dwPasswordLength || parts.dwExtraInfoLength) {
-        throw Error("请输入完整的 HTTP / HTTPS 服务地址，不能含账号、查询参数或片段。", ErrorKind::Validation);
+        throw Error(i18n::tr("error.invalid_server_url"), ErrorKind::Validation);
     }
     Server server;
     server.host.assign(parts.lpszHostName, parts.dwHostNameLength);
@@ -193,7 +193,7 @@ HttpResponse httpRequest(const Server& server, const std::wstring& path,
         if (GetTickCount64() - started > static_cast<ULONGLONG>(timeoutMs) * 2) networkError(creating);
         if (!WinHttpQueryDataAvailable(request.get(), &available)) networkError(creating);
         if (!available) break;
-        if (response.body.size() + available > 4 * 1024 * 1024) throw Error("服务返回的数据过大。", ErrorKind::Protocol);
+        if (response.body.size() + available > 4 * 1024 * 1024) throw Error(i18n::tr("error.response_too_large"), ErrorKind::Protocol);
         const auto offset = response.body.size();
         response.body.resize(offset + available);
         DWORD received = 0;
@@ -216,20 +216,20 @@ std::string Client::request(const std::string& path, const std::string& method, 
             try { persist_(jar_.cookies); }
             catch (...) {
                 if (method == "POST" && path.ends_with("/memos") && response.status >= 200 && response.status < 300) {
-                    throw Error("记录可能已保存，但本地会话更新失败。请先到 Memos 确认；草稿已保留。", ErrorKind::Storage);
+                    throw Error(i18n::tr("error.save_ok_session_fail"), ErrorKind::Storage);
                 }
                 throw;
             }
         }
     }
     if (response.status < 200 || response.status >= 300) {
-        if (response.status == 401) throw Error("登录已过期或凭据无效，请重新登录；草稿已保留。", ErrorKind::Auth, 401);
-        if (response.status == 403) throw Error("服务拒绝了请求，请检查账号权限或是否允许密码登录。", ErrorKind::Http, 403);
-        if (response.status == 429) throw Error("请求过于频繁，请稍后重试。", ErrorKind::Http, 429);
-        if (response.status >= 300 && response.status < 400) throw Error("服务地址发生重定向，请填写跳转后的最终地址。", ErrorKind::Http, response.status);
+        if (response.status == 401) throw Error(i18n::tr("error.auth_expired"), ErrorKind::Auth, 401);
+        if (response.status == 403) throw Error(i18n::tr("error.forbidden"), ErrorKind::Http, 403);
+        if (response.status == 429) throw Error(i18n::tr("error.rate_limited"), ErrorKind::Http, 429);
+        if (response.status >= 300 && response.status < 400) throw Error(i18n::tr("error.redirected"), ErrorKind::Http, response.status);
         if (response.status >= 500 && method == "POST" && path.ends_with("/memos"))
-            throw Error("服务未能确认保存结果，请先到 Memos 检查，再决定是否重试；草稿已保留。", ErrorKind::Http, response.status);
-        throw Error("Memos 返回错误（" + std::to_string(response.status) + "）。请稍后检查；草稿已保留。", ErrorKind::Http, response.status);
+            throw Error(i18n::tr("error.server_uncertain_save"), ErrorKind::Http, response.status);
+        throw Error(i18n::trFormat("error.memos_error", std::to_string(response.status)), ErrorKind::Http, response.status);
     }
     return response.body.empty() ? "{}" : response.body;
 }
@@ -243,7 +243,7 @@ void Client::discover() {
             int major = 0, minor = 0;
             const auto value = version.starts_with('v') ? version.substr(1) : version;
             if (sscanf_s(value.c_str(), "%d.%d", &major, &minor) == 2 && major == 0 && minor < 26) {
-                throw Error("需要 Memos 0.26 或更新版本。", ErrorKind::Validation);
+                throw Error(i18n::tr("error.memos_version_old"), ErrorKind::Validation);
             }
             api_ = prefix;
             // Browser authentication uses Connect. The REST gateway can wrap Set-Cookie
@@ -262,20 +262,20 @@ void Client::discover() {
             if (error.kind != ErrorKind::Protocol && error.status != 404 && error.status != 410) throw;
         }
     }
-    throw Error("未找到兼容 API。请检查服务地址，并使用 Memos 0.26 或更新版本。", ErrorKind::Protocol);
+    throw Error(i18n::tr("error.no_compatible_api"), ErrorKind::Protocol);
 }
 User Client::signIn(const std::string& username, const std::string& password) {
-    if (trim(username).empty() || password.empty()) throw Error("请填写用户名和密码。", ErrorKind::Validation);
+    if (trim(username).empty() || password.empty()) throw Error(i18n::tr("error.fill_credentials"), ErrorKind::Validation);
     discover();
     const Json body = { {"passwordCredentials", {{"username", trim(username)}, {"password", password}}} };
     const auto result = parseJson(authRequest("SignIn", "signin", body.dump()));
     token_ = field(result, "accessToken");
     if (token_.empty()) token_ = field(result, "access_token");
-    if (token_.empty()) throw Error("服务未返回登录会话，请检查 Memos 版本。", ErrorKind::Protocol);
+    if (token_.empty()) throw Error(i18n::tr("error.no_session"), ErrorKind::Protocol);
     const auto refreshPath = server_.basePath + wide(connectAuth_ ? "memos.api.v1.AuthService/RefreshToken" : api_ + "/auth/refresh");
     const auto refreshCookies = jar_.header(refreshPath, server_.secure);
     if (!refreshCookies.starts_with("memos_refresh=") && refreshCookies.find("; memos_refresh=") == std::string::npos)
-        throw Error("服务未返回可恢复的登录凭据，请检查 Memos 版本或反向代理的 Cookie 设置。", ErrorKind::Protocol);
+        throw Error(i18n::tr("error.no_refresh_cookies"), ErrorKind::Protocol);
     return currentUser();
 }
 void Client::refresh() {
@@ -283,7 +283,7 @@ void Client::refresh() {
     const auto result = parseJson(authRequest("RefreshToken", "refresh"));
     token_ = field(result, "accessToken");
     if (token_.empty()) token_ = field(result, "access_token");
-    if (token_.empty()) throw Error("无法恢复登录，请重新登录。", ErrorKind::Auth);
+    if (token_.empty()) throw Error(i18n::tr("error.cant_resume"), ErrorKind::Auth);
 }
 std::string Client::authRequest(const std::string& procedure, const std::string& restPath,
                                 const std::string& body, bool authenticated) {
@@ -294,21 +294,21 @@ std::string Client::authRequest(const std::string& procedure, const std::string&
 User Client::currentUser() {
     const auto result = parseJson(authRequest("GetCurrentUser", "me", "{}", true));
     const auto it = result.find("user");
-    if (it == result.end() || !it->is_object()) throw Error("无法确认登录账号，请重新登录。", ErrorKind::Auth);
+    if (it == result.end() || !it->is_object()) throw Error(i18n::tr("error.cant_verify_user"), ErrorKind::Auth);
     user_ = { field(*it, "name"), field(*it, "displayName") };
-    if (user_.name.empty()) throw Error("无法确认登录账号，请重新登录。", ErrorKind::Auth);
+    if (user_.name.empty()) throw Error(i18n::tr("error.cant_verify_user"), ErrorKind::Auth);
     if (user_.displayName.empty()) user_.displayName = field(*it, "username");
     if (user_.displayName.empty()) user_.displayName = user_.name;
     return user_;
 }
 User Client::resume() { refresh(); return currentUser(); }
 std::string Client::createMemo(const Draft& draft) {
-    if (!validDraft(draft) || (trim(draft.content).empty() && draft.attachments.empty())) throw Error("请填写内容或添加附件。", ErrorKind::Validation);
+    if (!validDraft(draft) || (trim(draft.content).empty() && draft.attachments.empty())) throw Error(i18n::tr("error.fill_content_or_attach"), ErrorKind::Validation);
     discover();
     if (token_.empty()) refresh();
     Json body = { {"content", draft.content}, {"visibility", draft.visibility} };
     for (const auto& attachment : draft.attachments) {
-        if (attachment.name.empty() || attachment.inlineImage) throw Error("请先完成附件上传。", ErrorKind::Validation);
+        if (attachment.name.empty() || attachment.inlineImage) throw Error(i18n::tr("error.wait_upload"), ErrorKind::Validation);
         body["attachments"].push_back({{"name",attachment.name}});
     }
     for (const auto& relation : draft.relations)
@@ -324,7 +324,7 @@ std::string Client::createMemo(const Draft& draft) {
         result = request(api_ + "/memos", "POST", body.dump(), true);
     }
     const auto name = field(parseJson(result), "name");
-    if (!name.starts_with("memos/")) throw Error("无法确认保存结果，请先到 Memos 检查；草稿已保留。", ErrorKind::Protocol);
+    if (!name.starts_with("memos/")) throw Error(i18n::tr("error.cant_confirm_save"), ErrorKind::Protocol);
     return name;
 }
 void Client::signOut() {

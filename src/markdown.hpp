@@ -9,5 +9,7 @@ struct MarkdownEdit {
     std::wstring replacement;
     size_t selectionStart, selectionEnd;
 };
-MarkdownEdit formatMarkdown(const std::wstring& content, size_t start, size_t end, MarkdownAction action);
+MarkdownEdit formatMarkdown(const std::wstring& content, size_t start, size_t end, MarkdownAction action,
+                            const std::wstring& textPlaceholder = L"文字",
+                            const std::wstring& codePlaceholder = L"代码");
 } // namespace mq

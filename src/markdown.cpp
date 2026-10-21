@@ -21,7 +21,8 @@ size_t headingPrefix(const std::wstring& text) {
 }
 } // namespace
 
-MarkdownEdit formatMarkdown(const std::wstring& content, size_t start, size_t end, MarkdownAction action) {
+MarkdownEdit formatMarkdown(const std::wstring& content, size_t start, size_t end, MarkdownAction action,
+                            const std::wstring& textPlaceholder, const std::wstring& codePlaceholder) {
     start = std::min(start, content.size()); end = std::clamp(end, start, content.size());
     const auto selected = content.substr(start, end - start);
     const auto wrap = [&](const std::wstring& before, const std::wstring& body, const std::wstring& after) {
@@ -38,21 +39,21 @@ MarkdownEdit formatMarkdown(const std::wstring& content, size_t start, size_t en
         const bool outside = start - left >= length && right - end >= length
             && (action == MarkdownAction::Bold || ((start - left) % 2 == 1 && (right - end) % 2 == 1));
         if (outside) return {start - length, end + length, selected, start - length, end - length};
-        return wrap(marker, selected.empty() ? L"文字" : selected, marker);
+        return wrap(marker, selected.empty() ? textPlaceholder : selected, marker);
     }
     if (action == MarkdownAction::Link) {
-        const auto body = selected.empty() ? L"文字" : selected;
+        const auto body = selected.empty() ? textPlaceholder : selected;
         const auto urlStart = start + 1 + std::wstring(body).size() + 2;
         return {start, end, L"[" + std::wstring(body) + L"](https://)", urlStart, urlStart + 8};
     }
     if (action == MarkdownAction::InlineCode) {
-        const auto body = selected.empty() ? L"代码" : selected;
+        const auto body = selected.empty() ? codePlaceholder : selected;
         const std::wstring marker(run(body, L'`') + 1, L'`');
         const bool pad = body.front() == L'`' || body.back() == L'`';
         return wrap(marker + (pad ? L" " : L""), body, (pad ? L" " : L"") + marker);
     }
     if (action == MarkdownAction::CodeBlock) {
-        const auto body = selected.empty() ? L"代码" : selected;
+        const auto body = selected.empty() ? codePlaceholder : selected;
         const std::wstring fence(std::max<size_t>(3, run(body, L'`') + 1), L'`');
         const auto before = (start > 0 && content[start - 1] != L'\n' ? L"\r\n" : L"") + fence + L"\r\n";
         const auto after = (body.ends_with(L"\n") ? L"" : L"\r\n") + fence

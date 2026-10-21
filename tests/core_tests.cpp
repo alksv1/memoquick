@@ -48,8 +48,60 @@ void markdownTests() {
     const auto empty = mq::formatMarkdown(L"", 0, 0, A::Bold);
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
 }
+void i18nTests() {
+    mq::i18n::resetToDefaults();
+    const auto langs = mq::i18n::availableLanguages();
+    check(langs.size() >= 2, "Available languages list is incomplete");
+    bool hasEn = false, hasZh = false;
+    for (const auto& lang : langs) {
+        if (lang.id == "en") { hasEn = true; check(lang.name == L"English", "English display name incorrect"); }
+        if (lang.id == "zh-CN") { hasZh = true; check(lang.name == L"简体中文", "Simplified Chinese display name incorrect"); }
+    }
+    check(hasEn && hasZh, "Missing standard language definitions");
+
+    // English strings
+    mq::i18n::setLanguage("en");
+    check(mq::i18n::currentLanguage() == "en", "Active language not English");
+    check(mq::i18n::tr("button.done") == "Done", "English translation incorrect");
+    check(mq::i18n::tr("button.back") == "Back", "English translation incorrect");
+    check(mq::i18n::tr("compose.save") == "Save", "English translation incorrect");
+    check(mq::i18n::tr("login.signin") == "Sign In", "English translation incorrect");
+    check(mq::i18n::trW("settings.title") == L"Settings", "English wide translation incorrect");
+
+    // Simplified Chinese strings
+    mq::i18n::setLanguage("zh-CN");
+    check(mq::i18n::currentLanguage() == "zh-CN", "Active language not Chinese");
+    check(mq::i18n::tr("button.done") == "完成", "Chinese translation incorrect");
+    check(mq::i18n::tr("button.back") == "返回", "Chinese translation incorrect");
+    check(mq::i18n::tr("compose.save") == "保存", "Chinese translation incorrect");
+    check(mq::i18n::tr("login.signin") == "登录", "Chinese translation incorrect");
+    check(mq::i18n::trW("settings.title") == L"设置", "Chinese wide translation incorrect");
+
+    // Custom language registration and fallback to English
+    mq::i18n::registerLanguage(
+        mq::i18n::LanguageInfo{"es", L"Español", {"es"}},
+        {{"button.done", "Hecho"}}
+    );
+    mq::i18n::setLanguage("es");
+    check(mq::i18n::currentLanguage() == "es", "Custom language not active");
+    check(mq::i18n::tr("button.done") == "Hecho", "Custom language string failed");
+    check(mq::i18n::tr("button.back") == "Back", "Missing translation did not fall back to English");
+    check(mq::i18n::tr("nonexistent.key.xyz") == "nonexistent.key.xyz", "Unknown key did not return key name");
+
+    // Formatting with placeholders
+    mq::i18n::setLanguage("en");
+    check(mq::i18n::trFormat("location.accuracy", "120") == "Accuracy ~120 m", "trFormat English failed");
+    mq::i18n::setLanguage("zh-CN");
+    check(mq::i18n::trFormat("location.accuracy", "120") == "精度约 120 米", "trFormat Chinese failed");
+
+    // System default resolution
+    mq::i18n::resetToDefaults();
+    mq::i18n::setLanguage("");
+    check(!mq::i18n::currentLanguage().empty(), "System default did not resolve a language");
+}
 void unitTests() {
     checks += clipboardTests();
+    i18nTests();
     // GIVEN provider responses and configurable URLs, WHEN validated, THEN malformed names and unsafe endpoints are rejected.
     check(mq::parseLocationName(R"({"display_name":" 中国，广东省，深圳市 "})") == "中国，广东省，深圳市", "Address name was not normalized");
     for (const auto body : {"{}", "[]", "not json", R"({"display_name":42})", R"({"display_name":"  "})"})
@@ -233,6 +285,21 @@ void unitTests() {
     {
         mq::Store store(directory); check(!store.config().dark && store.config().geocodingEndpoint.empty(), "Theme or disabled geocoding did not persist");
         check(store.windowPosition() == mq::WindowPosition{-640, 240, 520, 360}, "Settings update lost window position");
+        check(store.config().language.empty(), "Legacy settings did not default to empty language (system)");
+        auto withLang = store.config();
+        withLang.language = "en";
+        store.saveConfig(withLang);
+    }
+    {
+        mq::Store store(directory);
+        check(store.config().language == "en", "Saved language 'en' did not persist");
+        auto withZh = store.config();
+        withZh.language = "zh-CN";
+        store.saveConfig(withZh);
+    }
+    {
+        mq::Store store(directory);
+        check(store.config().language == "zh-CN", "Saved language 'zh-CN' did not persist");
     }
     // GIVEN legacy window.json with only x and y, WHEN loaded, THEN width and height default to 0.
     {

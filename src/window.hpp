@@ -26,6 +26,7 @@ enum ControlId : int {
     LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput,
     PanelConfirm, RecordButton, RecordTime, PreviewButton, LocateButton, LocationSettingsButton,
     GeocodingLabel, GeocodingInput, LocationAttribution,
+    LanguageLabel, LanguageInput,
     InsertAttachment = 1000, InsertImage, InsertAudio, InsertMemo, InsertLocation, RetryAttachments
 };
 enum class View { Login, Compose, Settings, Link, Location, Record };
@@ -68,6 +69,8 @@ private:
     void applyTheme();
     void toggleTheme();
     void chooseVisibility();
+    void chooseLanguage();
+    void retranslate();
     UINT trackMenu(HMENU menu, UINT flags, int x, int y);
     void measureMenu(MEASUREITEMSTRUCT& measure);
     void drawMenu(const DRAWITEMSTRUCT& draw);
@@ -113,6 +116,8 @@ private:
     Config config_;
     HWND handle_ = nullptr;
     HINSTANCE instance_ = nullptr;
+    HWND tips_ = nullptr;
+    std::string pendingLanguage_;
     std::map<int, HWND> controls_;
     std::unique_ptr<Client> client_;
     User user_;
