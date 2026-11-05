@@ -2,7 +2,7 @@
 
 English | [简体中文](README_zh.md)
 
-A standalone quick-capture tool for Memos, current version **0.2.6**. Native C++20 + Win32 window connecting directly to an existing Memos instance.
+A standalone quick-capture tool for Memos, current version **0.3.0**. Native C++20 + Win32 window connecting directly to an existing Memos instance.
 No dependencies on Memospot, Electron, WebView, Node.js, Python, or .NET runtimes.
 
 ## Usage

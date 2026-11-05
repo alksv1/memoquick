@@ -27,7 +27,7 @@ enum ControlId : int {
     LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput,
     PanelConfirm, RecordButton, RecordTime, PreviewButton, LocateButton, LocationSettingsButton,
     GeocodingLabel, GeocodingInput, LocationAttribution,
-    LanguageLabel, LanguageInput, TopmostButton, CodeTab, MarkdownPreviewTab, MarkdownPreview,
+    LanguageLabel, LanguageInput, TopmostButton, CodeTab, MarkdownPreviewTab, MarkdownPreview, PreviewScrollbar,
     InsertAttachment = 1000, InsertImage, InsertAudio, InsertMemo, InsertLocation, RetryAttachments
 };
 enum class View { Login, Compose, Settings, Link, Location, Record };
@@ -82,6 +82,8 @@ private:
     void markdown(MarkdownAction action);
     void setPreview(bool preview);
     void renderPreview();
+    void syncPreviewScrollbar();
+    void scrollPreviewTo(int position);
     void insertMenu();
     void chooseFiles(bool image);
     bool pasteClipboard();
@@ -141,7 +143,9 @@ private:
     bool resumePending_ = false;
     unsigned resumeAttempts_ = 0;
     int visibility_ = 0;
-    int wheelDelta_ = 0;
+    int wheelDelta_ = 0, previewWheelDelta_ = 0;
+    bool previewScrollbarDragging_ = false;
+    int previewScrollbarDragOffset_ = 0;
     Draft extras_;
     MemoPage memoPage_;
     std::string memoSearch_;

@@ -26,6 +26,24 @@ DWORD CALLBACK readPreview(DWORD_PTR cookie, LPBYTE buffer, LONG size, LONG* rea
     *read = static_cast<LONG>(count);
     return 0;
 }
+constexpr UINT SyncPreviewScrollbar = WM_APP + 20;
+struct PreviewThumb {
+    SCROLLINFO info{sizeof(SCROLLINFO), SIF_RANGE | SIF_PAGE | SIF_POS};
+    int top = 0, height = 0, travel = 0;
+    long long maxPosition = 0;
+};
+PreviewThumb previewThumb(HWND preview, int height, unsigned dpi) {
+    PreviewThumb thumb;
+    if (!GetScrollInfo(preview, SB_VERT, &thumb.info) || height <= 0) return thumb;
+    const long long range = static_cast<long long>(thumb.info.nMax) - thumb.info.nMin + 1;
+    thumb.maxPosition = std::max<long long>(thumb.info.nMin, static_cast<long long>(thumb.info.nMax) - std::max(1u, thumb.info.nPage) + 1);
+    if (range <= 0 || thumb.maxPosition <= thumb.info.nMin) return thumb;
+    thumb.height = static_cast<int>(std::clamp<long long>(height * static_cast<long long>(thumb.info.nPage) / range, std::min(height, scaled(24, dpi)), height));
+    thumb.travel = height - thumb.height;
+    thumb.top = static_cast<int>(thumb.travel * (static_cast<long long>(thumb.info.nPos) - thumb.info.nMin) / (thumb.maxPosition - thumb.info.nMin));
+    thumb.top = std::clamp(thumb.top, 0, thumb.travel);
+    return thumb;
+}
 bool trayIcon(HWND window, HINSTANCE instance, DWORD operation) {
     NOTIFYICONDATAW icon{};
     icon.cbSize = sizeof(icon); icon.hWnd = window; icon.uID = 1;
@@ -242,12 +260,54 @@ void Window::renderPreview() {
     if (stream.dwError) throw Error(i18n::tr("error.create_controls"), ErrorKind::Storage);
     if (previewMode_) SendMessageW(preview, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
 }
+void Window::syncPreviewScrollbar() {
+    const auto preview = control(MarkdownPreview), barWindow = control(PreviewScrollbar);
+    if (!preview || !barWindow) return;
+    SCROLLBARINFO bar{}; bar.cbSize = sizeof(bar);
+    if (!previewMode_ || view_ != View::Compose || !IsWindowVisible(preview) ||
+        !GetScrollBarInfo(preview, OBJID_VSCROLL, &bar) || (bar.rgstate[0] & STATE_SYSTEM_INVISIBLE) ||
+        bar.rcScrollBar.right <= bar.rcScrollBar.left || bar.rcScrollBar.bottom <= bar.rcScrollBar.top) {
+        ShowWindow(barWindow, SW_HIDE);
+        return;
+    }
+    RECT rect = bar.rcScrollBar;
+    MapWindowPoints(nullptr, handle_, reinterpret_cast<POINT*>(&rect), 2);
+    RECT current{}; GetWindowRect(barWindow, &current);
+    MapWindowPoints(nullptr, handle_, reinterpret_cast<POINT*>(&current), 2);
+    if (!IsWindowVisible(barWindow) || !EqualRect(&rect, &current))
+        SetWindowPos(barWindow, HWND_TOP, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(barWindow, nullptr, FALSE);
+}
+void Window::scrollPreviewTo(int position) {
+    const auto preview = control(MarkdownPreview);
+    // RichEdit's thumb messages and EM_SETSCROLLPOS truncate positions to 16 bits.
+    // Move by lines and use the full scrollbar position as feedback instead.
+    const auto lines = std::max<LRESULT>(1, SendMessageW(preview, EM_GETLINECOUNT, 0, 0));
+    for (int attempt = 0; attempt < 12; ++attempt) {
+        SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS};
+        if (!GetScrollInfo(preview, SB_VERT, &info)) break;
+        const long long maxPos = std::max<long long>(info.nMin, static_cast<long long>(info.nMax) - std::max(1u, info.nPage) + 1);
+        const long long target = std::clamp<long long>(position, info.nMin, maxPos);
+        const long long delta = target - info.nPos;
+        if (!delta || maxPos == info.nMin) break;
+        long long step = delta * lines / (maxPos - info.nMin);
+        if (!step) step = delta > 0 ? 1 : -1;
+        step = std::clamp<long long>(step, -1000000, 1000000);
+        SendMessageW(preview, EM_LINESCROLL, 0, static_cast<LPARAM>(step));
+        SCROLLINFO after{sizeof(after), SIF_POS};
+        if (!GetScrollInfo(preview, SB_VERT, &after) || after.nPos == info.nPos) break;
+        if ((delta > 0 && after.nPos > target) || (delta < 0 && after.nPos < target)) break;
+    }
+    InvalidateRect(control(PreviewScrollbar), nullptr, FALSE);
+}
 void Window::setPreview(bool preview) {
     if (view_ != View::Compose || busy_ || preview == previewMode_) return;
     if (preview) renderPreview();
     previewMode_ = preview;
     ShowWindow(control(Editor), preview ? SW_HIDE : SW_SHOW);
     ShowWindow(control(MarkdownPreview), preview ? SW_SHOW : SW_HIDE);
+    syncPreviewScrollbar();
     for (int id = MdBold; id <= MdCodeBlock; ++id) EnableWindow(control(id), !preview);
     InvalidateRect(control(CodeTab), nullptr, TRUE);
     InvalidateRect(control(MarkdownPreviewTab), nullptr, TRUE);
@@ -293,8 +353,77 @@ void Window::createControls() {
     add(CodeTab, L"BUTTON", i18n::trW("compose.code").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(MarkdownPreviewTab, L"BUTTON", i18n::trW("compose.preview").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(Editor, L"EDIT", L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL | WS_TABSTOP);
-    add(MarkdownPreview, MSFTEDIT_CLASS, L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL | WS_TABSTOP);
+    add(MarkdownPreview, MSFTEDIT_CLASS, L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL | WS_TABSTOP | WS_CLIPSIBLINGS);
+    add(PreviewScrollbar, L"STATIC", L"", WS_CLIPSIBLINGS | SS_NOTIFY);
     SendMessageW(control(MarkdownPreview), EM_EXLIMITTEXT, 0, 1000000);
+    SetWindowSubclass(control(MarkdownPreview), [](HWND preview, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) -> LRESULT {
+        const auto self = reinterpret_cast<Window*>(data);
+        LRESULT result = 0;
+        if (message == WM_MOUSEWHEEL) {
+            self->previewWheelDelta_ += GET_WHEEL_DELTA_WPARAM(wparam);
+            const int steps = self->previewWheelDelta_ / WHEEL_DELTA;
+            self->previewWheelDelta_ %= WHEEL_DELTA;
+            UINT lines = 3; SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+            if (lines == WHEEL_PAGESCROLL) {
+                for (int i = 0; i < std::abs(steps); ++i) SendMessageW(preview, EM_SCROLL, steps > 0 ? SB_PAGEUP : SB_PAGEDOWN, 0);
+            } else {
+                const auto count = std::min(lines, 100u) * static_cast<unsigned>(std::abs(steps));
+                for (unsigned i = 0; i < count; ++i) SendMessageW(preview, WM_VSCROLL, steps > 0 ? SB_LINEUP : SB_LINEDOWN, 0);
+            }
+        } else result = DefSubclassProc(preview, message, wparam, lparam);
+        if (message == WM_PAINT || message == WM_VSCROLL || message == WM_MOUSEWHEEL ||
+            message == WM_KEYDOWN || message == WM_SIZE || (message == WM_MOUSEMOVE && (wparam & MK_LBUTTON)) ||
+            message == WM_LBUTTONUP || message == WM_TIMER || message == EM_STREAMIN ||
+            message == EM_SETSCROLLPOS || message == EM_LINESCROLL)
+            PostMessageW(self->handle_, SyncPreviewScrollbar, 0, 0);
+        return result;
+    }, 1, reinterpret_cast<DWORD_PTR>(this));
+    SetWindowSubclass(control(PreviewScrollbar), [](HWND bar, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) -> LRESULT {
+        const auto self = reinterpret_cast<Window*>(data);
+        const auto preview = self->control(MarkdownPreview);
+        RECT rect{}; GetClientRect(bar, &rect);
+        const auto thumb = previewThumb(preview, rect.bottom, self->dpi_);
+        if (message == WM_PAINT || message == WM_PRINTCLIENT) {
+            PAINTSTRUCT paint{};
+            const auto dc = message == WM_PAINT ? BeginPaint(bar, &paint) : reinterpret_cast<HDC>(wparam);
+            const auto colors = palette(self->config_.dark);
+            const auto background = CreateSolidBrush(colors.background);
+            FillRect(dc, &rect, background); DeleteObject(background);
+            if (thumb.height > 0) {
+                const int inset = std::min<int>(std::max(2, scaled(5, self->dpi_)), std::max(0L, (rect.right - 1) / 2));
+                const auto brush = CreateSolidBrush(colors.muted);
+                const auto oldBrush = SelectObject(dc, brush);
+                const auto oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+                const int radius = std::max(2L, rect.right - 2 * inset);
+                RoundRect(dc, inset, thumb.top, rect.right - inset, thumb.top + thumb.height, radius, radius);
+                SelectObject(dc, oldPen); SelectObject(dc, oldBrush); DeleteObject(brush);
+            }
+            if (message == WM_PAINT) EndPaint(bar, &paint);
+            return 0;
+        }
+        if (message == WM_ERASEBKGND) return 1;
+        if (message == WM_MOUSEWHEEL) return SendMessageW(preview, message, wparam, lparam);
+        if (message == WM_LBUTTONDOWN && thumb.height) {
+            const int y = GET_Y_LPARAM(lparam);
+            if (y >= thumb.top && y < thumb.top + thumb.height) {
+                self->previewScrollbarDragging_ = true;
+                self->previewScrollbarDragOffset_ = y - thumb.top;
+                SetCapture(bar);
+            } else {
+                SendMessageW(preview, WM_VSCROLL, y < thumb.top ? SB_PAGEUP : SB_PAGEDOWN, 0);
+            }
+            return 0;
+        }
+        if (message == WM_MOUSEMOVE && self->previewScrollbarDragging_ && GetCapture() == bar && thumb.travel > 0) {
+            const int top = std::clamp(GET_Y_LPARAM(lparam) - self->previewScrollbarDragOffset_, 0, thumb.travel);
+            const auto position = thumb.info.nMin + (thumb.maxPosition - thumb.info.nMin) * top / thumb.travel;
+            self->scrollPreviewTo(static_cast<int>(position));
+            return 0;
+        }
+        if (message == WM_LBUTTONUP && GetCapture() == bar) { ReleaseCapture(); return 0; }
+        if (message == WM_CAPTURECHANGED) self->previewScrollbarDragging_ = false;
+        return DefSubclassProc(bar, message, wparam, lparam);
+    }, 1, reinterpret_cast<DWORD_PTR>(this));
     SetWindowSubclass(control(Editor), [](HWND input, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) -> LRESULT {
         if (message == WM_PASTE) {
             const auto self = reinterpret_cast<Window*>(data);
@@ -971,6 +1100,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
     if (taskbarCreated_ && msg == taskbarCreated_) { trayIcon(handle_, instance_, NIM_ADD); return 0; }
     switch (msg) {
     case WM_CREATE: createControls(); return 0;
+    case SyncPreviewScrollbar: syncPreviewScrollbar(); return 0;
     case WM_SIZE:
         layout();
         if (previewMode_ && view_ == View::Compose && !IsIconic(handle_)) SetTimer(handle_, PreviewResizeTimer, 80, nullptr);

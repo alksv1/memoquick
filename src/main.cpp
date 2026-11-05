@@ -4,6 +4,7 @@
 #include <psapi.h>
 #include <objbase.h>
 #include <dwmapi.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <fstream>
@@ -227,6 +228,70 @@ public:
             if (editorLineHeight <= 0 || previewLineHeight <= 0 ||
                 std::abs(editorLineHeight - previewLineHeight) > MulDiv(2, static_cast<int>(GetDpiForWindow(handle)), 96))
                 throw std::runtime_error("Preview line spacing does not match the editor: " + std::to_string(editorLineHeight) + " / " + std::to_string(previewLineHeight));
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::CodeTab, BN_CLICKED), 0);
+            std::wstring scrollFixture;
+            for (int i = 0; i < 100; ++i) scrollFixture += L"Preview scrolling line\r\n\r\n";
+            SetWindowTextW(lineEditor, scrollFixture.c_str());
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::MarkdownPreviewTab, BN_CLICKED), 0);
+            SCROLLINFO scrollInfo{}; scrollInfo.cbSize = sizeof(scrollInfo); scrollInfo.fMask = SIF_ALL;
+            require(GetScrollInfo(linePreview, SB_VERT, &scrollInfo) && scrollInfo.nMax > static_cast<int>(scrollInfo.nPage),
+                "Preview scrollbar has no scroll range");
+            SendMessageW(linePreview, WM_VSCROLL, SB_TOP, 0);
+            SendMessageW(linePreview, WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), 0);
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            require(scrollInfo.nPos > 0, "Preview mouse wheel did not scroll");
+            SendMessageW(linePreview, WM_VSCROLL, SB_BOTTOM, 0);
+            const auto bottomLine = SendMessageW(linePreview, EM_GETFIRSTVISIBLELINE, 0, 0);
+            SendMessageW(linePreview, WM_KEYDOWN, VK_PRIOR, 0);
+            require(SendMessageW(linePreview, EM_GETFIRSTVISIBLELINE, 0, 0) < bottomLine, "Preview keyboard did not scroll");
+            UpdateWindow(handle); screenshot(handle, output_ / L"preview-scrollbar-light.bmp");
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
+            const auto scrollbar = GetDlgItem(handle, mq::PreviewScrollbar);
+            require(scrollbar && IsWindowVisible(scrollbar), "The themed preview scrollbar is not visible");
+            RECT scrollbarBounds{}; GetClientRect(scrollbar, &scrollbarBounds);
+            const int scrollX = (scrollbarBounds.right - scrollbarBounds.left) / 2;
+            const int scrollY = (scrollbarBounds.bottom - scrollbarBounds.top) / 2;
+            POINT hit{scrollX, scrollY}; ClientToScreen(scrollbar, &hit);
+            require(WindowFromPoint(hit) == scrollbar, "The themed scrollbar is not above the native scrollbar");
+            SendMessageW(linePreview, WM_VSCROLL, SB_TOP, 0);
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            const int barHeight = scrollbarBounds.bottom - scrollbarBounds.top;
+            const int minThumb = std::min(barHeight, MulDiv(24, static_cast<int>(GetDpiForWindow(handle)), 96));
+            const int thumbHeight = std::clamp(static_cast<int>(static_cast<long long>(barHeight) * scrollInfo.nPage /
+                (static_cast<long long>(scrollInfo.nMax) - scrollInfo.nMin + 1)), minThumb, barHeight);
+            const int grabY = thumbHeight / 2;
+            SendMessageW(scrollbar, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(scrollX, grabY));
+            SendMessageW(scrollbar, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(scrollX, barHeight - 1));
+            SendMessageW(scrollbar, WM_LBUTTONUP, 0, MAKELPARAM(scrollX, barHeight - 1));
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            require(scrollInfo.nPos > (scrollInfo.nMax - static_cast<int>(scrollInfo.nPage)) / 2, "Dragging the preview scrollbar did not reach the bottom");
+            SendMessageW(scrollbar, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(scrollX, 1));
+            SendMessageW(scrollbar, WM_LBUTTONUP, 0, MAKELPARAM(scrollX, 1));
+            SCROLLINFO afterClick{sizeof(afterClick), SIF_POS};
+            GetScrollInfo(linePreview, SB_VERT, &afterClick);
+            require(afterClick.nPos < scrollInfo.nPos, "Clicking the preview scrollbar track did not page up");
+            SendMessageW(scrollbar, WM_MOUSEMOVE, 0, MAKELPARAM(scrollX, scrollY));
+            RedrawWindow(scrollbar, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            const auto scrollbarDc = GetDC(scrollbar);
+            const auto trackColor = GetPixel(scrollbarDc, 0, scrollY);
+            ReleaseDC(scrollbar, scrollbarDc);
+            require(trackColor == RGB(29, 31, 35), "Preview scrollbar track lost its dark theme on hover");
+            UpdateWindow(handle); screenshot(handle, output_ / L"preview-scrollbar-dark.bmp");
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::CodeTab, BN_CLICKED), 0);
+            std::wstring veryLongPreview;
+            for (int i = 0; i < 6000; ++i) veryLongPreview += L"Line\r\n\r\n";
+            SetWindowTextW(lineEditor, veryLongPreview.c_str());
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::MarkdownPreviewTab, BN_CLICKED), 0);
+            SendMessageW(linePreview, WM_VSCROLL, SB_TOP, 0);
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            require(SendMessageW(linePreview, EM_GETLINECOUNT, 0, 0) >= 6000, "Large preview lost content");
+            SendMessageW(scrollbar, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(scrollX, minThumb / 2));
+            SendMessageW(scrollbar, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(scrollX, barHeight - 1));
+            SendMessageW(scrollbar, WM_LBUTTONUP, 0, MAKELPARAM(scrollX, barHeight - 1));
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            require(SendMessageW(linePreview, EM_GETFIRSTVISIBLELINE, 0, 0) > 5900,
+                "Large preview scrollbar could not reach the bottom");
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::CodeTab, BN_CLICKED), 0);
             SetWindowTextW(lineEditor, L"# Preview\r\n\r\n---\r\n\r\n```cpp\r\nint x = 1;\r\n```\r\n\r\n| Name | Value |\r\n| --- | --- |\r\n| hello | world |\r\n");
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::MarkdownPreviewTab, BN_CLICKED), 0);
