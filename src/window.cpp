@@ -423,12 +423,13 @@ void Window::layout() {
         place(LoginButton, width - 88, height - 40, 76, 28);
         place(ResumeButton, x, height - 40, 84, 28);
     } else if (view_ == View::Compose) {
-        place(CodeTab, x - 4, 34, 68, 24);
-        place(MarkdownPreviewTab, x + 66, 34, 76, 24);
-        for (int id = MdBold; id <= MdCodeBlock; ++id) place(id, x - 4 + (id - MdBold) * 30, 62, 28, 24);
-        const int editorHeight = std::max(40, height - 138 - noticeHeight);
-        place(Editor, x, 92, contentWidth, editorHeight);
-        place(MarkdownPreview, x, 92, contentWidth, editorHeight);
+        const int toolStep = std::min(28, (contentWidth - 112) / 10);
+        for (int id = MdBold; id <= MdCodeBlock; ++id) place(id, x - 4 + (id - MdBold) * toolStep, 34, toolStep, 24);
+        place(CodeTab, width - 112, 34, 45, 24);
+        place(MarkdownPreviewTab, width - 66, 34, 58, 24);
+        const int editorHeight = std::max(40, height - 112 - noticeHeight);
+        place(Editor, x, 66, contentWidth, editorHeight);
+        place(MarkdownPreview, x, 66, contentWidth, editorHeight);
         RECT editRect{0, scaled(4, dpi_), scaled(contentWidth, dpi_), scaled(editorHeight - 4, dpi_)};
         SendMessageW(control(Editor), EM_SETRECT, 0, reinterpret_cast<LPARAM>(&editRect));
         place(Visibility, x - 4, height - 39, 110, 28);
@@ -1144,7 +1145,8 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         SelectObject(dc, oldBrush); SelectObject(dc, oldPen); DeleteObject(brush);
         const bool markdownTool = item->CtlID >= MdBold && item->CtlID <= MdCodeBlock;
         SetBkMode(dc, TRANSPARENT); SetTextColor(dc, primary ? RGB(255,255,255) : (disabled || markdownTool) ? colors.muted : colors.ink);
-        const auto oldFont = SelectObject(dc, font_);
+        const bool compactTool = markdownTool && item->rcItem.right - item->rcItem.left < scaled(24, dpi_);
+        const auto oldFont = SelectObject(dc, compactTool ? smallFont_ : font_);
         auto rect = item->rcItem; const auto caption = text(static_cast<int>(item->CtlID));
         if (item->CtlID == StartupInput) {
             RECT box{rect.left + scaled(3, dpi_), rect.top + scaled(7, dpi_), rect.left + scaled(17, dpi_), rect.top + scaled(21, dpi_)};

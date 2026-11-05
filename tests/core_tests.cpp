@@ -50,7 +50,12 @@ void markdownTests() {
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
     const auto preview = mq::previewRtf(L"# 标题\r\n**bold** and [link](https://example.com)\r\n- [x] done\r\n```\r\n{\\object}\r\n```", false);
     check(preview.find("\\b\\fs40") != std::string::npos && preview.find("{\\b bold}") != std::string::npos, "Preview lost heading or bold formatting");
-    check(preview.find("\\u26631?") != std::string::npos && preview.find("[x] done") != std::string::npos, "Preview lost Unicode or task content");
+    check(preview.find("\\u26631?") != std::string::npos && preview.find("\\u9745? done") != std::string::npos, "Preview lost Unicode or checked task");
+    const auto tasks = mq::previewRtf(L"- [ ] todo\r\n- [x] done\r\n- [X] done too\r\n- ordinary\r\n- [z] literal", false);
+    check(tasks.find("\\u9744? todo") != std::string::npos && tasks.find("\\u9745? done") != std::string::npos &&
+        tasks.find("\\u9745? done too") != std::string::npos, "Preview task checkboxes have incorrect states");
+    check(tasks.find("\\u8226? ordinary") != std::string::npos && tasks.find("\\u8226? [z] literal") != std::string::npos,
+        "Preview changed non-task list items");
     check(preview.find("\\{\\\\object\\}") != std::string::npos && preview.find("https://example.com") == std::string::npos, "Preview did not escape code or hide link destination");
     check(mq::previewRtf(std::wstring(50000, L'['), true).size() > 50000, "Preview lost unmatched delimiters");
 }
