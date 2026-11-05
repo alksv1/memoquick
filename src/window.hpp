@@ -26,7 +26,7 @@ enum ControlId : int {
     LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput,
     PanelConfirm, RecordButton, RecordTime, PreviewButton, LocateButton, LocationSettingsButton,
     GeocodingLabel, GeocodingInput, LocationAttribution,
-    LanguageLabel, LanguageInput, TopmostButton,
+    LanguageLabel, LanguageInput, TopmostButton, CodeTab, MarkdownPreviewTab, MarkdownPreview,
     InsertAttachment = 1000, InsertImage, InsertAudio, InsertMemo, InsertLocation, RetryAttachments
 };
 enum class View { Login, Compose, Settings, Link, Location, Record };
@@ -79,6 +79,8 @@ private:
     void ensurePositionVisible();
     void rememberPosition();
     void markdown(MarkdownAction action);
+    void setPreview(bool preview);
+    void renderPreview();
     void insertMenu();
     void chooseFiles(bool image);
     bool pasteClipboard();
@@ -119,6 +121,7 @@ private:
     HWND handle_ = nullptr;
     HINSTANCE instance_ = nullptr;
     HWND tips_ = nullptr;
+    HMODULE richEdit_ = nullptr;
     std::string pendingLanguage_;
     std::map<int, HWND> controls_;
     std::unique_ptr<Client> client_;
@@ -127,6 +130,7 @@ private:
     View beforeSettings_ = View::Login;
     std::jthread worker_;
     bool busy_ = false;
+    bool previewMode_ = false;
     bool draftDirty_ = false;
     bool hotkeyRegistered_ = false;
     bool settingEditor_ = false;
