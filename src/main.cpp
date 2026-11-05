@@ -228,6 +228,27 @@ public:
                 std::abs(editorLineHeight - previewLineHeight) > MulDiv(2, static_cast<int>(GetDpiForWindow(handle)), 96))
                 throw std::runtime_error("Preview line spacing does not match the editor: " + std::to_string(editorLineHeight) + " / " + std::to_string(previewLineHeight));
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::CodeTab, BN_CLICKED), 0);
+            SetWindowTextW(lineEditor, L"# Preview\r\n\r\n---\r\n\r\n```cpp\r\nint x = 1;\r\n```\r\n\r\n| Name | Value |\r\n| --- | --- |\r\n| hello | world |\r\n");
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::MarkdownPreviewTab, BN_CLICKED), 0);
+            std::wstring features(static_cast<size_t>(GetWindowTextLengthW(linePreview)) + 1, L'\0');
+            GetWindowTextW(linePreview, features.data(), static_cast<int>(features.size()));
+            require(features.find(L"cpp") != std::wstring::npos && features.find(L"hello") != std::wstring::npos,
+                "Preview lost code language or table content");
+            UpdateWindow(handle); screenshot(handle, output_ / L"preview-markdown-light.bmp");
+            RECT previewSize{}; GetWindowRect(handle, &previewSize);
+            const int previewDpi = static_cast<int>(GetDpiForWindow(handle));
+            SetWindowPos(handle, nullptr, 0, 0, MulDiv(620, previewDpi, 96), MulDiv(420, previewDpi, 96),
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            SendMessageW(handle, WM_TIMER, mq::PreviewResizeTimer, 0); // Run the debounced preview resize callback.
+            require(GetWindowTextLengthW(linePreview) > 0, "Preview was lost on resize");
+            UpdateWindow(handle); screenshot(handle, output_ / L"preview-markdown-wide.bmp");
+            SetWindowPos(handle, nullptr, 0, 0, previewSize.right - previewSize.left, previewSize.bottom - previewSize.top,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            SendMessageW(handle, WM_TIMER, mq::PreviewResizeTimer, 0);
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
+            UpdateWindow(handle); screenshot(handle, output_ / L"preview-markdown-dark.bmp");
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::ThemeButton, BN_CLICKED), 0);
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::CodeTab, BN_CLICKED), 0);
             SetWindowTextW(lineEditor, L"");
             SendMessageW(GetDlgItem(handle, mq::Editor), EM_REPLACESEL, TRUE,
                 reinterpret_cast<LPARAM>(L"原生 C++ 快速记录 📝\r\n#测试\r\n- [ ] 整理灵感"));

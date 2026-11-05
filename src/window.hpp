@@ -15,6 +15,7 @@ inline constexpr wchar_t WindowClass[] = L"MemoQuick.Native.Window";
 inline constexpr UINT ShowMessage = WM_APP + 1;
 inline constexpr UINT TrayMessage = WM_APP + 2;
 inline constexpr UINT CompleteMessage = WM_APP + 3;
+inline constexpr UINT_PTR PreviewResizeTimer = 7;
 enum ControlId : int {
     Heading = 100, Subtitle, ServerLabel, ServerInput, UsernameLabel, UsernameInput,
     PasswordLabel, PasswordInput, LoginButton, ResumeButton, Editor, Visibility,

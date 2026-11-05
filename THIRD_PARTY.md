@@ -9,6 +9,13 @@
 
 This is a compile-time header, with no additional runtime service or library to install.
 
+**MD4C 0.5.2** by Martin Mitáš and contributors is used to parse Markdown previews.
+
+- Source: https://github.com/mity/md4c/tree/release-0.5.2
+- License: MIT; included in `third_party/LICENSE-md4c.txt`.
+- Compiled into the application; no additional runtime is required.
+- Local patch: wrap one delimiter string in `_T()` for the Windows UTF-16 build.
+
 The Windows SDK's **C++/WinRT** headers by Microsoft are used for native geolocation.
 
 - Source: https://github.com/microsoft/cppwinrt

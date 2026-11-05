@@ -58,6 +58,21 @@ void markdownTests() {
         "Preview changed non-task list items");
     check(preview.find("\\{\\\\object\\}") != std::string::npos && preview.find("https://example.com") == std::string::npos, "Preview did not escape code or hide link destination");
     check(mq::previewRtf(std::wstring(50000, L'['), true).size() > 50000, "Preview lost unmatched delimiters");
+    const auto rich = mq::previewRtf(L"Title\n=====\n\n3) first\n   - nested\n4) second\n\n| A | B |\n| :- | -: |\n| x | **y** |\n\n---\n\n```c++\n{code}\n```\n\n![alt](https://example.com/a.png)", false, 4000);
+    check(rich.find("\\b\\fs40 Title") != std::string::npos, "Setext heading was not parsed");
+    check(rich.find("3) first") != std::string::npos && rich.find("4) second") != std::string::npos &&
+        rich.find("\\li720") != std::string::npos && rich.find("\\u8226? nested") != std::string::npos, "Nested or ordered list lost its markers");
+    check(rich.find("\\cellx2000") != std::string::npos && rich.find("\\cellx4000") != std::string::npos &&
+        rich.find("\\clbrdrb") != std::string::npos && rich.find("\\qr ") != std::string::npos, "Table borders, width or alignment missing");
+    check(rich.find("\\trrh-20") != std::string::npos && rich.find("c++\\par}") != std::string::npos &&
+        rich.find("\\{code\\}") != std::string::npos, "Rule or fenced code rendering failed");
+    check(rich.find("alt") != std::string::npos && rich.find("example.com/a.png") == std::string::npos, "Image placeholder exposed its destination");
+    const auto inlineRtf = mq::previewRtf(L"**bold *inner*** ~~gone~~ `x{y}`\\nnext", true, 2400);
+    check(inlineRtf.find("{\\b bold {\\i inner}}") != std::string::npos && inlineRtf.find("{\\strike gone}") != std::string::npos &&
+        inlineRtf.find("x\\{y\\}") != std::string::npos && inlineRtf.find("\\sl-285\\slmult0") != std::string::npos, "Inline parsing or line spacing failed");
+    check(inlineRtf.find("\\red230\\green230\\blue230") != std::string::npos, "Dark palette missing");
+    check(mq::previewRtf(L"---", false, 2000).find("\\cellx2000") != std::string::npos, "Rule did not use supplied width");
+    check(mq::previewRtf(L"---", false, 100).find("\\cellx1200") != std::string::npos, "Rule minimum width missing");
 }
 void i18nTests() {
     mq::i18n::resetToDefaults();

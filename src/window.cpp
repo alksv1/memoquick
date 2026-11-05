@@ -228,12 +228,19 @@ void Window::toggleTopmost() {
     if (view_ == View::Compose) SetFocus(control(previewMode_ ? MarkdownPreview : Editor));
 }
 void Window::renderPreview() {
-    const auto rtf = previewRtf(text(Editor), config_.dark);
+    const auto preview = control(MarkdownPreview);
+    RECT rect{};
+    SendMessageW(preview, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&rect));
+    const int width = MulDiv(std::max(80L, rect.right - rect.left - scaled(24, dpi_)), 1440, static_cast<int>(dpi_));
+    POINT scroll{};
+    if (previewMode_) SendMessageW(preview, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
+    const auto rtf = previewRtf(text(Editor), config_.dark, width);
     PreviewStream source{rtf};
     EDITSTREAM stream{}; stream.dwCookie = reinterpret_cast<DWORD_PTR>(&source); stream.pfnCallback = readPreview;
     SendMessageW(control(MarkdownPreview), EM_SETBKGNDCOLOR, 0, palette(config_.dark).background);
     SendMessageW(control(MarkdownPreview), EM_STREAMIN, SF_RTF, reinterpret_cast<LPARAM>(&stream));
     if (stream.dwError) throw Error(i18n::tr("error.create_controls"), ErrorKind::Storage);
+    if (previewMode_) SendMessageW(preview, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
 }
 void Window::setPreview(bool preview) {
     if (view_ != View::Compose || busy_ || preview == previewMode_) return;
@@ -966,6 +973,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_CREATE: createControls(); return 0;
     case WM_SIZE:
         layout();
+        if (previewMode_ && view_ == View::Compose && !IsIconic(handle_)) SetTimer(handle_, PreviewResizeTimer, 80, nullptr);
         if (positionReady_ && !IsIconic(handle_) && !IsZoomed(handle_)) SetTimer(handle_, PositionTimer, 300, nullptr);
         return 0;
     case WM_MOVE:
@@ -1037,6 +1045,10 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         return 0;
     case CompleteMessage: complete(std::unique_ptr<Completion>(reinterpret_cast<Completion*>(lparam))); return 0;
     case WM_TIMER:
+        if (wparam == PreviewResizeTimer) {
+            KillTimer(handle_, PreviewResizeTimer);
+            if (previewMode_ && view_ == View::Compose) renderPreview();
+        }
         if (wparam == DraftTimer) flushDraft();
         if (wparam == PositionTimer) rememberPosition();
         if (wparam == 3) recordTick();
