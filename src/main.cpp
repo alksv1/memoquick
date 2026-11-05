@@ -229,8 +229,8 @@ public:
                 std::abs(editorLineHeight - previewLineHeight) > MulDiv(2, static_cast<int>(GetDpiForWindow(handle)), 96))
                 throw std::runtime_error("Preview line spacing does not match the editor: " + std::to_string(editorLineHeight) + " / " + std::to_string(previewLineHeight));
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::CodeTab, BN_CLICKED), 0);
-            std::wstring scrollFixture;
-            for (int i = 0; i < 100; ++i) scrollFixture += L"Preview scrolling line\r\n\r\n";
+            std::wstring scrollFixture = L"---\r\n\r\n# Tall heading\r\n\r\n```cpp\r\nint value = 0;\r\n```\r\n\r\n";
+            for (int i = 0; i < 100; ++i) scrollFixture += i % 8 == 0 ? L"## Another heading\r\n\r\n" : L"Preview scrolling line\r\n\r\n";
             SetWindowTextW(lineEditor, scrollFixture.c_str());
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::MarkdownPreviewTab, BN_CLICKED), 0);
             SCROLLINFO scrollInfo{}; scrollInfo.cbSize = sizeof(scrollInfo); scrollInfo.fMask = SIF_ALL;
@@ -240,7 +240,21 @@ public:
             SendMessageW(linePreview, WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), 0);
             GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
             require(scrollInfo.nPos > 0, "Preview mouse wheel did not scroll");
+            SendMessageW(linePreview, WM_VSCROLL, SB_TOP, 0);
+            SendMessageW(linePreview, WM_VSCROLL, SB_LINEDOWN, 0);
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            require(scrollInfo.nPos > 0, "Preview fixture failed to scroll below the leading rule");
+            const int beforeUp = scrollInfo.nPos;
+            SendMessageW(linePreview, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            if (scrollInfo.nPos != 0) throw std::runtime_error("Wheel failed to reach top: before=" + std::to_string(beforeUp) + " after=" + std::to_string(scrollInfo.nPos));
             SendMessageW(linePreview, WM_VSCROLL, SB_BOTTOM, 0);
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            const int wheelStart = scrollInfo.nPos;
+            SendMessageW(linePreview, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+            GetScrollInfo(linePreview, SB_VERT, &scrollInfo);
+            require(wheelStart - scrollInfo.nPos >= MulDiv(10, static_cast<int>(GetDpiForWindow(handle)), 96),
+                "Mouse wheel moved too slowly with a leading rule");
             const auto bottomLine = SendMessageW(linePreview, EM_GETFIRSTVISIBLELINE, 0, 0);
             SendMessageW(linePreview, WM_KEYDOWN, VK_PRIOR, 0);
             require(SendMessageW(linePreview, EM_GETFIRSTVISIBLELINE, 0, 0) < bottomLine, "Preview keyboard did not scroll");
@@ -261,6 +275,24 @@ public:
                 (static_cast<long long>(scrollInfo.nMax) - scrollInfo.nMin + 1)), minThumb, barHeight);
             const int grabY = thumbHeight / 2;
             SendMessageW(scrollbar, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(scrollX, grabY));
+            const int maxScroll = scrollInfo.nMax - static_cast<int>(scrollInfo.nPage) + 1;
+            const int travel = barHeight - thumbHeight;
+            for (int percent : {25, 50, 75}) {
+                SendMessageW(scrollbar, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(scrollX, grabY + travel * percent / 100));
+                SCROLLINFO actual{sizeof(actual), SIF_POS};
+                GetScrollInfo(linePreview, SB_VERT, &actual);
+                if (std::abs(actual.nPos - maxScroll * percent / 100) > std::max(12, maxScroll / 50))
+                    throw std::runtime_error("Preview scrollbar jumped while dragging: position=" + std::to_string(actual.nPos) + " max=" + std::to_string(maxScroll) + " percent=" + std::to_string(percent));
+                const int previous = actual.nPos;
+                SendMessageW(scrollbar, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(scrollX, grabY + travel * percent / 100));
+                GetScrollInfo(linePreview, SB_VERT, &actual);
+                require(std::abs(actual.nPos - previous) <= 1, "Preview scrollbar moved while the mouse was stationary");
+            }
+            SendMessageW(scrollbar, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(scrollX, grabY + travel / 4));
+            SCROLLINFO reverse{sizeof(reverse), SIF_POS};
+            GetScrollInfo(linePreview, SB_VERT, &reverse);
+            require(std::abs(reverse.nPos - maxScroll / 4) <= std::max(12, maxScroll / 50),
+                "Preview scrollbar jumped when reversing direction");
             SendMessageW(scrollbar, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(scrollX, barHeight - 1));
             SendMessageW(scrollbar, WM_LBUTTONUP, 0, MAKELPARAM(scrollX, barHeight - 1));
             GetScrollInfo(linePreview, SB_VERT, &scrollInfo);

@@ -146,6 +146,7 @@ private:
     int wheelDelta_ = 0, previewWheelDelta_ = 0;
     bool previewScrollbarDragging_ = false;
     int previewScrollbarDragOffset_ = 0;
+    int previewScrollbarLastDragY_ = 0;
     Draft extras_;
     MemoPage memoPage_;
     std::string memoSearch_;
