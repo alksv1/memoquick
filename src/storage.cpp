@@ -99,7 +99,7 @@ Store::Store(std::filesystem::path directory) : impl_(std::make_unique<Impl>()) 
             impl_->config = { value.value("server", ""), value.value("modifiers", static_cast<unsigned>(MOD_CONTROL | MOD_ALT)),
                 value.value("key", static_cast<unsigned>('M')), value.value("startAtLogin", false), value.value("theme", "light") == "dark",
                 value.value("geocodingEndpoint", "https://nominatim.openstreetmap.org/reverse"),
-                value.value("language", "") };
+                value.value("language", ""), value.value("alwaysOnTop", false) };
             if (!impl_->config.server.empty()) parseServer(impl_->config.server);
         }
         const auto privatePath = impl_->directory / L"private.bin";
@@ -138,7 +138,8 @@ void Store::saveConfig(const Config& config) {
         {"startAtLogin", config.startAtLogin},
         {"theme", config.dark ? "dark" : "light"},
         {"geocodingEndpoint", config.geocodingEndpoint},
-        {"language", config.language}
+        {"language", config.language},
+        {"alwaysOnTop", config.alwaysOnTop}
     };
     const auto plain = value.dump(2);
     const std::vector<unsigned char> bytes(plain.begin(), plain.end());

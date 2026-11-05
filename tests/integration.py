@@ -278,17 +278,21 @@ def run_fixture(prefix, desktop, executable, connect=False):
                 settings = json.loads(settings_file.read_text("utf-8"))
                 assert "language" in settings, "settings.json missing language field"
                 settings["language"] = "en"
+                settings["alwaysOnTop"] = True
                 settings_file.write_text(json.dumps(settings), "utf-8")
                 subprocess.run([executable, "--check-position", "--data-dir", data, "--output", str(output)], check=True, timeout=15)
                 restored = json.loads((output / "position.json").read_text())
                 assert restored["configuredLanguage"] == "en", "Configured language 'en' did not restore across restart"
                 assert restored["language"] == "en", "Active language did not switch to 'en' across restart"
+                assert restored["alwaysOnTop"], "Always-on-top did not restore across restart"
+                settings["alwaysOnTop"] = False
                 settings["language"] = "zh-CN"
                 settings_file.write_text(json.dumps(settings), "utf-8")
                 subprocess.run([executable, "--check-position", "--data-dir", data, "--output", str(output)], check=True, timeout=15)
                 restored = json.loads((output / "position.json").read_text())
                 assert restored["configuredLanguage"] == "zh-CN", "Configured language 'zh-CN' did not restore"
                 assert restored["language"] == "zh-CN", "Active language did not switch to 'zh-CN'"
+                assert not restored["alwaysOnTop"], "Disabled always-on-top did not restore across restart"
             assert len(server.creates) == 5, "Desktop submission count incorrect"
             assert server.refreshes == 2
             assert len(server.files) == 4, "Desktop attachments were lost or duplicated"

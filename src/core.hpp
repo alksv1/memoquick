@@ -91,6 +91,7 @@ struct Config {
     bool dark = false;
     std::string geocodingEndpoint = "https://nominatim.openstreetmap.org/reverse";
     std::string language;
+    bool alwaysOnTop = false;
     bool operator==(const Config&) const = default;
 };
 struct HttpResponse {

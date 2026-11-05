@@ -26,7 +26,7 @@ enum ControlId : int {
     LocationLabel, LocationName, LatitudeLabel, LatitudeInput, LongitudeLabel, LongitudeInput,
     PanelConfirm, RecordButton, RecordTime, PreviewButton, LocateButton, LocationSettingsButton,
     GeocodingLabel, GeocodingInput, LocationAttribution,
-    LanguageLabel, LanguageInput,
+    LanguageLabel, LanguageInput, TopmostButton,
     InsertAttachment = 1000, InsertImage, InsertAudio, InsertMemo, InsertLocation, RetryAttachments
 };
 enum class View { Login, Compose, Settings, Link, Location, Record };
@@ -68,6 +68,8 @@ private:
     void fonts();
     void applyTheme();
     void toggleTheme();
+    void toggleTopmost();
+    void updateTopmostButton();
     void chooseVisibility();
     void chooseLanguage();
     void retranslate();

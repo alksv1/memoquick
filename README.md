@@ -22,7 +22,7 @@ Startup runs silently in the background, opened via hotkey or tray icon. For the
 0.2.2 fixed credential persistence for newer Memos versions; after upgrading from older versions, sign in once to restore automatic session renewal.
 The main interface is a compact 420 × 280 window. Drag the top bar to move, or drag edges to resize.
 Window position and size are remembered across restarts and restored automatically; when monitor layout changes, the window automatically moves back to the visible work area.
-The top-bar **Light / Dark** button toggles themes with instant persistence; **···** opens Settings.
+The top-bar **Pin / Pinned** button toggles always-on-top and remembers the choice across restarts; **Light / Dark** toggles themes, and **···** opens Settings.
 The save shortcut is **Ctrl + Enter**, with tooltip hints displayed on hover.
 If a hotkey conflicts with another application, you can still open MemoQuick from the tray and pick a different shortcut in Settings.
 Default visibility for new memos is "Only Me", with options for signed-in users or public.
@@ -97,7 +97,7 @@ See [Release Notes](RELEASE_NOTES.md) for detailed version upgrade notes. Versio
 
 Data is stored by default in `%LOCALAPPDATA%\MemoQuick`:
 
-- `settings.json`: Server address, hotkey, startup preference, interface language, and theme.
+- `settings.json`: Server address, hotkey, startup preference, interface language, theme, and always-on-top state.
 - `window.json`: Window position and dimensions, supporting negative coordinates on multi-monitor setups.
 - `private.bin`: Windows DPAPI encrypted refresh sessions and drafts, bound to the current Windows user.
 - `attachments/*.bin`: Windows DPAPI encrypted attachment and audio cache, isolated by server and user account.

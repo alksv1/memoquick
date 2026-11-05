@@ -67,7 +67,7 @@ HWND Window::create(HINSTANCE instance, bool background) {
         width = position->width;
         height = position->height;
     }
-    handle_ = CreateWindowExW(0, WindowClass, L"MemoQuick", WindowStyle,
+    handle_ = CreateWindowExW(config_.alwaysOnTop ? WS_EX_TOPMOST : 0, WindowClass, L"MemoQuick", WindowStyle,
         position ? position->x : CW_USEDEFAULT, position ? position->y : CW_USEDEFAULT,
         width, height,
         nullptr, nullptr, instance, this);
@@ -187,6 +187,32 @@ void Window::toggleTheme() {
     applyTheme();
     if (view_ == View::Compose) SetFocus(control(Editor));
 }
+void Window::updateTopmostButton() {
+    text(TopmostButton, i18n::trW(config_.alwaysOnTop ? "topmost.on" : "topmost.off"));
+    if (tips_) {
+        auto tip = i18n::trW(config_.alwaysOnTop ? "topmost.disable" : "topmost.enable");
+        TOOLINFOW tool{}; tool.cbSize = sizeof(tool); tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        tool.hwnd = handle_; tool.uId = reinterpret_cast<UINT_PTR>(control(TopmostButton)); tool.lpszText = tip.data();
+        SendMessageW(tips_, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+    }
+    InvalidateRect(control(TopmostButton), nullptr, TRUE);
+}
+void Window::toggleTopmost() {
+    const bool enabled = !config_.alwaysOnTop;
+    if (!SetWindowPos(handle_, enabled ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
+        throw Error(i18n::tr("topmost.error"), ErrorKind::Storage);
+    auto next = config_; next.alwaysOnTop = enabled;
+    try { store_.saveConfig(next); }
+    catch (...) {
+        SetWindowPos(handle_, enabled ? HWND_NOTOPMOST : HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        throw;
+    }
+    config_ = next;
+    updateTopmostButton();
+    if (view_ == View::Compose) SetFocus(control(Editor));
+}
 void Window::markdown(MarkdownAction action) {
     if (view_ != View::Compose || busy_ || imeComposing(control(Editor))) return;
     DWORD start = 0, end = 0;
@@ -211,6 +237,7 @@ void Window::createControls() {
     };
     add(Heading, L"STATIC", i18n::trW("app.name").c_str());
     add(ThemeButton, L"BUTTON", config_.dark ? L"Dark" : L"Light", BS_OWNERDRAW | WS_TABSTOP);
+    add(TopmostButton, L"BUTTON", i18n::trW(config_.alwaysOnTop ? "topmost.on" : "topmost.off").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(CloseButton, L"BUTTON", L"×", BS_OWNERDRAW | WS_TABSTOP);
     add(SettingsButton, L"BUTTON", L"···", BS_OWNERDRAW | WS_TABSTOP);
     add(ServerLabel, L"STATIC", i18n::trW("login.server").c_str());
@@ -316,6 +343,7 @@ void Window::createControls() {
     tips_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, handle_, nullptr, instance_, nullptr);
     const std::map<int, std::wstring> tipMap{{ThemeButton, i18n::trW("theme.toggle")},
+            {TopmostButton, i18n::trW(config_.alwaysOnTop ? "topmost.disable" : "topmost.enable")},
             {SettingsButton, i18n::trW("header.settings")}, {CloseButton, i18n::trW("header.close")}, {SaveButton, i18n::trW("compose.save_tooltip")},
             {AddButton, i18n::trW("compose.add_tooltip")}, {MetadataButton, i18n::trW("compose.metadata_tooltip")},
             {MdBold, i18n::trW("markdown.bold")}, {MdItalic, i18n::trW("markdown.italic")}, {MdHeading, i18n::trW("markdown.heading")},
@@ -338,7 +366,8 @@ void Window::layout() {
     const int width = MulDiv(bounds.right, 96, static_cast<int>(dpi_));
     const int height = MulDiv(bounds.bottom, 96, static_cast<int>(dpi_));
     const int x = 12, contentWidth = width - 24;
-    place(Heading, x, 9, contentWidth - 126, 20);
+    place(Heading, x, 9, contentWidth - 188, 20);
+    place(TopmostButton, width - 182, 4, 60, 26);
     place(ThemeButton, width - 120, 4, 52, 26);
     place(SettingsButton, width - 66, 4, 28, 26);
     place(CloseButton, width - 36, 4, 28, 26);
@@ -410,9 +439,9 @@ void Window::setView(View view) {
             SetWindowPos(handle_, nullptr, 0, 0, bounds.right - bounds.left, scaled(270, dpi_), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
     for (const auto& [id, window] : controls_)
-        if (id != Heading && id != ThemeButton && id != SettingsButton && id != CloseButton) ShowWindow(window, SW_HIDE);
+        if (id != Heading && id != ThemeButton && id != TopmostButton && id != SettingsButton && id != CloseButton) ShowWindow(window, SW_HIDE);
     const auto visible = [&](std::initializer_list<int> ids) { for (const auto id : ids) ShowWindow(control(id), SW_SHOW); };
-    visible({Heading, ThemeButton, SettingsButton, CloseButton});
+    visible({Heading, TopmostButton, ThemeButton, SettingsButton, CloseButton});
     if (!notice_.empty()) visible({NoticeLabel});
     text(Heading, view == View::Settings ? i18n::trW("settings.title") : view == View::Link ? i18n::trW("link.title") : view == View::Location ? i18n::trW("location.title") : view == View::Record ? i18n::trW("record.title") : i18n::trW("app.name"));
     text(BackButton, view == View::Settings ? i18n::trW("button.back") : i18n::trW("button.cancel"));
@@ -580,6 +609,7 @@ void Window::retranslate() {
         }
     }
 
+    updateTopmostButton();
     trayIcon(handle_, instance_, NIM_MODIFY);
     InvalidateRect(handle_, nullptr, TRUE);
 }
@@ -587,7 +617,7 @@ void Window::setBusy(bool busy) {
     busy_ = busy;
     for (int id = MdBold; id <= MdCodeBlock; ++id) EnableWindow(control(id), !busy);
     for (const auto id : {ServerInput, UsernameInput, PasswordInput, LoginButton, ResumeButton, Visibility,
-            SaveButton, SettingsButton, ThemeButton, HotkeyInput, LanguageInput, StartupInput, GeocodingInput, SettingsSaveButton, BackButton, LogoutButton}) {
+            SaveButton, SettingsButton, ThemeButton, TopmostButton, HotkeyInput, LanguageInput, StartupInput, GeocodingInput, SettingsSaveButton, BackButton, LogoutButton}) {
         EnableWindow(control(id), !busy);
     }
     SendMessageW(control(Editor), EM_SETREADONLY, busy ? TRUE : FALSE, 0);
@@ -909,7 +939,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (bottom) return left ? HTBOTTOMLEFT : right ? HTBOTTOMRIGHT : HTBOTTOM;
         if (left) return HTLEFT;
         if (right) return HTRIGHT;
-        if (y < scaled(33, dpi_) && x < rect.right - rect.left - scaled(126, dpi_)) return HTCAPTION;
+        if (y < scaled(33, dpi_) && x < rect.right - rect.left - scaled(188, dpi_)) return HTCAPTION;
         return HTCLIENT;
     }
     case WM_ERASEBKGND: {
@@ -996,6 +1026,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (id == BrowserButton) browser();
         if (id == CloseButton) hide();
         if (id == ThemeButton) toggleTheme();
+        if (id == TopmostButton) toggleTopmost();
         if (id == Visibility) chooseVisibility();
         if (id == LanguageInput) chooseLanguage();
         if (id == StartupInput) { startupChecked_ = !startupChecked_; InvalidateRect(control(StartupInput), nullptr, TRUE); }
@@ -1052,7 +1083,7 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         const auto colors = palette(config_.dark);
         const bool disabled = item->itemState & ODS_DISABLED;
         const bool pressed = item->itemState & ODS_SELECTED;
-        const bool primary = item->CtlID == SaveButton || item->CtlID == LoginButton || item->CtlID == SettingsSaveButton || item->CtlID == PanelConfirm;
+        const bool primary = item->CtlID == SaveButton || item->CtlID == LoginButton || item->CtlID == SettingsSaveButton || item->CtlID == PanelConfirm || (item->CtlID == TopmostButton && config_.alwaysOnTop);
         const auto brush = CreateSolidBrush(primary ? (disabled ? colors.muted : colors.accent) : pressed ? colors.hover : colors.background);
         FillRect(dc, &item->rcItem, background_);
         const auto oldBrush = SelectObject(dc, brush); const auto oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
