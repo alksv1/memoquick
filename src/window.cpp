@@ -281,8 +281,22 @@ void Window::syncPreviewScrollbar() {
 }
 void Window::scrollPreviewTo(int position) {
     const auto preview = control(MarkdownPreview);
-    // RichEdit's thumb messages and EM_SETSCROLLPOS truncate positions to 16 bits.
-    // Move by lines and use the full scrollbar position as feedback instead.
+    // Use pixel positions for ordinary documents. Rich Edit truncates these to
+    // 16 bits on long documents, so retain the line-based fallback for those.
+    SCROLLINFO initial{sizeof(initial), SIF_RANGE | SIF_PAGE | SIF_POS};
+    if (!GetScrollInfo(preview, SB_VERT, &initial)) return;
+    const long long maximum = std::max<long long>(initial.nMin, static_cast<long long>(initial.nMax) - std::max(1u, initial.nPage) + 1);
+    if (maximum <= 65535) {
+        POINT scroll{};
+        SendMessageW(preview, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
+        scroll.y = static_cast<LONG>(std::clamp<long long>(position, initial.nMin, maximum));
+        SendMessageW(preview, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
+        SCROLLINFO after{sizeof(after), SIF_POS};
+        if (GetScrollInfo(preview, SB_VERT, &after) && std::abs(after.nPos - position) <= 2) {
+            InvalidateRect(control(PreviewScrollbar), nullptr, FALSE);
+            return;
+        }
+    }
     const auto lines = std::max<LRESULT>(1, SendMessageW(preview, EM_GETLINECOUNT, 0, 0));
     for (int attempt = 0; attempt < 12; ++attempt) {
         SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS};
@@ -368,7 +382,14 @@ void Window::createControls() {
                 for (int i = 0; i < std::abs(steps); ++i) SendMessageW(preview, EM_SCROLL, steps > 0 ? SB_PAGEUP : SB_PAGEDOWN, 0);
             } else {
                 const auto count = std::min(lines, 100u) * static_cast<unsigned>(std::abs(steps));
-                for (unsigned i = 0; i < count; ++i) SendMessageW(preview, WM_VSCROLL, steps > 0 ? SB_LINEUP : SB_LINEDOWN, 0);
+                SCROLLINFO before{sizeof(before), SIF_POS};
+                GetScrollInfo(preview, SB_VERT, &before);
+                if (steps > 0 && count && before.nPos <= scaled(16, self->dpi_) * static_cast<int>(count)) {
+                    SendMessageW(preview, WM_VSCROLL, SB_TOP, 0);
+                } else {
+                    for (unsigned i = 0; i < count; ++i)
+                        SendMessageW(preview, WM_VSCROLL, steps > 0 ? SB_LINEUP : SB_LINEDOWN, 0);
+                }
             }
         } else result = DefSubclassProc(preview, message, wparam, lparam);
         if (message == WM_PAINT || message == WM_VSCROLL || message == WM_MOUSEWHEEL ||
@@ -408,6 +429,7 @@ void Window::createControls() {
             if (y >= thumb.top && y < thumb.top + thumb.height) {
                 self->previewScrollbarDragging_ = true;
                 self->previewScrollbarDragOffset_ = y - thumb.top;
+                self->previewScrollbarLastDragY_ = y;
                 SetCapture(bar);
             } else {
                 SendMessageW(preview, WM_VSCROLL, y < thumb.top ? SB_PAGEUP : SB_PAGEDOWN, 0);
@@ -415,7 +437,10 @@ void Window::createControls() {
             return 0;
         }
         if (message == WM_MOUSEMOVE && self->previewScrollbarDragging_ && GetCapture() == bar && thumb.travel > 0) {
-            const int top = std::clamp(GET_Y_LPARAM(lparam) - self->previewScrollbarDragOffset_, 0, thumb.travel);
+            const int y = GET_Y_LPARAM(lparam);
+            if (y == self->previewScrollbarLastDragY_) return 0;
+            self->previewScrollbarLastDragY_ = y;
+            const int top = std::clamp(y - self->previewScrollbarDragOffset_, 0, thumb.travel);
             const auto position = thumb.info.nMin + (thumb.maxPosition - thumb.info.nMin) * top / thumb.travel;
             self->scrollPreviewTo(static_cast<int>(position));
             return 0;

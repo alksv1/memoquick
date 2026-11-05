@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(MemoQuick VERSION 0.3.0 LANGUAGES C CXX RC)
+project(MemoQuick VERSION 0.3.1 LANGUAGES C CXX RC)
 if(NOT WIN32)
   message(FATAL_ERROR "MemoQuick uses native Windows APIs and requires Windows.")
 endif()
