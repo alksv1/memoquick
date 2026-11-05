@@ -17,6 +17,8 @@ const std::unordered_map<std::string, std::string> zhCnStrings = {
     // General & Navigation
     {"app.name", "MemoQuick"},
     {"app.slogan", "随手记下"},
+    {"compose.code", "编辑"},
+    {"compose.preview", "预览"},
     {"theme.toggle", "切换 Light / Dark"},
     {"topmost.off", "置顶"},
     {"topmost.on", "已置顶"},
@@ -251,6 +253,8 @@ const std::unordered_map<std::string, std::string> enStrings = {
     // General & Navigation
     {"app.name", "MemoQuick"},
     {"app.slogan", "Quick Notes"},
+    {"compose.code", "Code"},
+    {"compose.preview", "Preview"},
     {"theme.toggle", "Toggle Light / Dark"},
     {"topmost.off", "Pin"},
     {"topmost.on", "Pinned"},

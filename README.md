@@ -29,6 +29,8 @@ Default visibility for new memos is "Only Me", with options for signed-in users 
 
 ## Markdown Tools
 
+Use **Code / Preview** above the editor to switch between Markdown source and a read-only formatted preview. Switching preserves the draft and editor selection. The native preview supports common headings, emphasis, lists, quotes, links and code; it does not load images or open links, and complex Markdown may display as source.
+
 The toolbar above the text area supports selection formatting; when no text is selected, it inserts placeholder text. List, heading, and quote tools apply to the current line or full selected lines.
 Bold, italic, and line prefixes can be clicked again to cancel. Lists can be converted directly into other list types, and formatting operations can be undone with **Ctrl + Z**.
 When inserting a link, the URL placeholder is selected automatically—just paste your URL. Only Markdown source text is edited; links are not uploaded or opened automatically.
@@ -88,7 +90,7 @@ See [Release Notes](RELEASE_NOTES.md) for detailed version upgrade notes. Versio
 - Windows 10 / 11 x64.
 - Connects to an existing **Memos 0.26 or newer** instance supporting username and password sign-in.
 - Automatically detects `/api/v1` and newer `/api` routes, including reverse proxy subpaths.
-- Current version does not provide SSO login, Markdown preview, or local embedded Memos server.
+- Current version does not provide SSO login or a local embedded Memos server.
 - Cannot inherit session state from other clients; sign in once in MemoQuick, with automatic renewals thereafter.
 - "Open Memos" uses the default system browser with its own session state.
 - HTTPS uses Windows certificate validation; server address must be the final destination without following redirects.

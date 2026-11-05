@@ -1,5 +1,8 @@
 #include "window.hpp"
 #include "theme.hpp"
+#include "preview.hpp"
+#include <richedit.h>
+#include <cstring>
 #include <shellapi.h>
 #include <dwmapi.h>
 #include <imm.h>
@@ -14,6 +17,15 @@ constexpr UINT_PTR TrayTimer = 4;
 constexpr UINT_PTR ResumeTimer = 5;
 constexpr UINT_PTR LocationTimer = 6;
 constexpr DWORD WindowStyle = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN;
+struct PreviewStream { const std::string& data; size_t offset = 0; };
+DWORD CALLBACK readPreview(DWORD_PTR cookie, LPBYTE buffer, LONG size, LONG* read) {
+    auto& stream = *reinterpret_cast<PreviewStream*>(cookie);
+    const auto count = std::min(static_cast<size_t>(size), stream.data.size() - stream.offset);
+    std::memcpy(buffer, stream.data.data() + stream.offset, count);
+    stream.offset += count;
+    *read = static_cast<LONG>(count);
+    return 0;
+}
 bool trayIcon(HWND window, HINSTANCE instance, DWORD operation) {
     NOTIFYICONDATAW icon{};
     icon.cbSize = sizeof(icon); icon.hWnd = window; icon.uID = 1;
@@ -48,6 +60,7 @@ Window::~Window() {
     PlaySoundW(nullptr, nullptr, 0);
     DeleteObject(font_); DeleteObject(headingFont_); DeleteObject(smallFont_);
     DeleteObject(background_); DeleteObject(inputBackground_);
+    if (richEdit_) FreeLibrary(richEdit_);
 }
 HWND Window::create(HINSTANCE instance, bool background) {
     instance_ = instance;
@@ -97,7 +110,7 @@ void Window::show() {
     ShowWindow(handle_, smoke_ ? SW_SHOWNOACTIVATE : SW_RESTORE);
     ensurePositionVisible();
     if (!smoke_) SetForegroundWindow(handle_);
-    if (view_ == View::Compose && !busy_) SetFocus(control(Editor));
+    if (view_ == View::Compose && !busy_) SetFocus(control(previewMode_ ? MarkdownPreview : Editor));
     if (resumePending_ && !busy_ && view_ == View::Login) restore();
 }
 void Window::ensurePositionVisible() {
@@ -178,6 +191,7 @@ void Window::applyTheme() {
     const BOOL dark = config_.dark;
     DwmSetWindowAttribute(handle_, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     text(ThemeButton, config_.dark ? L"Dark" : L"Light");
+    if (previewMode_ && view_ == View::Compose && control(MarkdownPreview)) renderPreview();
     RedrawWindow(handle_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 void Window::toggleTheme() {
@@ -185,7 +199,7 @@ void Window::toggleTheme() {
     store_.saveConfig(next);
     config_ = next;
     applyTheme();
-    if (view_ == View::Compose) SetFocus(control(Editor));
+    if (view_ == View::Compose) SetFocus(control(previewMode_ ? MarkdownPreview : Editor));
 }
 void Window::updateTopmostButton() {
     text(TopmostButton, i18n::trW(config_.alwaysOnTop ? "topmost.on" : "topmost.off"));
@@ -211,10 +225,29 @@ void Window::toggleTopmost() {
     }
     config_ = next;
     updateTopmostButton();
-    if (view_ == View::Compose) SetFocus(control(Editor));
+    if (view_ == View::Compose) SetFocus(control(previewMode_ ? MarkdownPreview : Editor));
+}
+void Window::renderPreview() {
+    const auto rtf = previewRtf(text(Editor), config_.dark);
+    PreviewStream source{rtf};
+    EDITSTREAM stream{}; stream.dwCookie = reinterpret_cast<DWORD_PTR>(&source); stream.pfnCallback = readPreview;
+    SendMessageW(control(MarkdownPreview), EM_SETBKGNDCOLOR, 0, palette(config_.dark).background);
+    SendMessageW(control(MarkdownPreview), EM_STREAMIN, SF_RTF, reinterpret_cast<LPARAM>(&stream));
+    if (stream.dwError) throw Error(i18n::tr("error.create_controls"), ErrorKind::Storage);
+}
+void Window::setPreview(bool preview) {
+    if (view_ != View::Compose || busy_ || preview == previewMode_) return;
+    if (preview) renderPreview();
+    previewMode_ = preview;
+    ShowWindow(control(Editor), preview ? SW_HIDE : SW_SHOW);
+    ShowWindow(control(MarkdownPreview), preview ? SW_SHOW : SW_HIDE);
+    for (int id = MdBold; id <= MdCodeBlock; ++id) EnableWindow(control(id), !preview);
+    InvalidateRect(control(CodeTab), nullptr, TRUE);
+    InvalidateRect(control(MarkdownPreviewTab), nullptr, TRUE);
+    SetFocus(control(preview ? MarkdownPreview : Editor));
 }
 void Window::markdown(MarkdownAction action) {
-    if (view_ != View::Compose || busy_ || imeComposing(control(Editor))) return;
+    if (view_ != View::Compose || busy_ || previewMode_ || imeComposing(control(Editor))) return;
     DWORD start = 0, end = 0;
     SendMessageW(control(Editor), EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
     const auto content = text(Editor);
@@ -229,6 +262,8 @@ void Window::markdown(MarkdownAction action) {
     SendMessageW(control(Editor), EM_SCROLLCARET, 0, 0);
 }
 void Window::createControls() {
+    richEdit_ = LoadLibraryExW(L"Msftedit.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!richEdit_) throw Error(i18n::tr("error.create_controls"), ErrorKind::Storage);
     const auto add = [&](int id, const wchar_t* klass, const wchar_t* textValue, DWORD style = 0, DWORD extended = 0) {
         const auto child = CreateWindowExW(extended, klass, textValue, WS_CHILD | style, 0, 0, 0, 0,
             handle_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
@@ -248,7 +283,11 @@ void Window::createControls() {
     add(PasswordInput, L"EDIT", L"", ES_AUTOHSCROLL | ES_PASSWORD | WS_TABSTOP | WS_BORDER);
     add(LoginButton, L"BUTTON", i18n::trW("login.signin").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(ResumeButton, L"BUTTON", i18n::trW("login.resume").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(CodeTab, L"BUTTON", i18n::trW("compose.code").c_str(), BS_OWNERDRAW | WS_TABSTOP);
+    add(MarkdownPreviewTab, L"BUTTON", i18n::trW("compose.preview").c_str(), BS_OWNERDRAW | WS_TABSTOP);
     add(Editor, L"EDIT", L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL | WS_TABSTOP);
+    add(MarkdownPreview, MSFTEDIT_CLASS, L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL | WS_TABSTOP);
+    SendMessageW(control(MarkdownPreview), EM_EXLIMITTEXT, 0, 1000000);
     SetWindowSubclass(control(Editor), [](HWND input, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) -> LRESULT {
         if (message == WM_PASTE) {
             const auto self = reinterpret_cast<Window*>(data);
@@ -384,9 +423,12 @@ void Window::layout() {
         place(LoginButton, width - 88, height - 40, 76, 28);
         place(ResumeButton, x, height - 40, 84, 28);
     } else if (view_ == View::Compose) {
-        for (int id = MdBold; id <= MdCodeBlock; ++id) place(id, x - 4 + (id - MdBold) * 30, 34, 28, 24);
-        const int editorHeight = std::max(80, height - 110 - noticeHeight);
-        place(Editor, x, 64, contentWidth, editorHeight);
+        place(CodeTab, x - 4, 34, 68, 24);
+        place(MarkdownPreviewTab, x + 66, 34, 76, 24);
+        for (int id = MdBold; id <= MdCodeBlock; ++id) place(id, x - 4 + (id - MdBold) * 30, 62, 28, 24);
+        const int editorHeight = std::max(40, height - 138 - noticeHeight);
+        place(Editor, x, 92, contentWidth, editorHeight);
+        place(MarkdownPreview, x, 92, contentWidth, editorHeight);
         RECT editRect{0, scaled(4, dpi_), scaled(contentWidth, dpi_), scaled(editorHeight - 4, dpi_)};
         SendMessageW(control(Editor), EM_SETRECT, 0, reinterpret_cast<LPARAM>(&editRect));
         place(Visibility, x - 4, height - 39, 110, 28);
@@ -449,9 +491,12 @@ void Window::setView(View view) {
         visible({ServerLabel, ServerInput, UsernameLabel, UsernameInput, PasswordLabel, PasswordInput, LoginButton});
         if (!config_.server.empty()) visible({ResumeButton});
     } else if (view == View::Compose) {
-        visible({Editor, Visibility, SaveButton, AddButton, MetadataButton});
+        visible({CodeTab, MarkdownPreviewTab, previewMode_ ? MarkdownPreview : Editor, Visibility, SaveButton, AddButton, MetadataButton});
         updateMetadata();
-        for (int id = MdBold; id <= MdCodeBlock; ++id) ShowWindow(control(id), SW_SHOW);
+        for (int id = MdBold; id <= MdCodeBlock; ++id) {
+            ShowWindow(control(id), SW_SHOW);
+            EnableWindow(control(id), !busy_ && !previewMode_);
+        }
     } else if (view == View::Settings) {
         visible({HotkeyLabel, HotkeyInput, LanguageLabel, LanguageInput, StartupInput, SettingsSaveButton, BackButton, AccountLabel, GeocodingLabel, GeocodingInput});
         text(GeocodingInput, wide(config_.geocodingEndpoint));
@@ -483,7 +528,7 @@ void Window::setView(View view) {
     }
     layout();
     applyTheme();
-    if (view == View::Compose) SetFocus(control(Editor));
+    if (view == View::Compose) SetFocus(control(previewMode_ ? MarkdownPreview : Editor));
 }
 void Window::chooseVisibility() {
     const auto menu = CreatePopupMenu();
@@ -542,6 +587,8 @@ void Window::retranslate() {
     };
     text(Visibility, visibilityTexts[std::clamp(visibility_, 0, 2)] + L" ▾");
     text(SaveButton, busy_ ? i18n::trW("compose.saving") : i18n::trW("compose.save"));
+    text(CodeTab, i18n::trW("compose.code"));
+    text(MarkdownPreviewTab, i18n::trW("compose.preview"));
     updateMetadata();
 
     text(HotkeyLabel, i18n::trW("settings.hotkey"));
@@ -615,7 +662,9 @@ void Window::retranslate() {
 }
 void Window::setBusy(bool busy) {
     busy_ = busy;
-    for (int id = MdBold; id <= MdCodeBlock; ++id) EnableWindow(control(id), !busy);
+    for (int id = MdBold; id <= MdCodeBlock; ++id) EnableWindow(control(id), !busy && !previewMode_);
+    EnableWindow(control(CodeTab), !busy);
+    EnableWindow(control(MarkdownPreviewTab), !busy);
     for (const auto id : {ServerInput, UsernameInput, PasswordInput, LoginButton, ResumeButton, Visibility,
             SaveButton, SettingsButton, ThemeButton, TopmostButton, HotkeyInput, LanguageInput, StartupInput, GeocodingInput, SettingsSaveButton, BackButton, LogoutButton}) {
         EnableWindow(control(id), !busy);
@@ -739,6 +788,7 @@ void Window::complete(std::unique_ptr<Completion> result) {
             if (result->errorKind == ErrorKind::Auth) { text(PasswordInput, L""); setView(View::Login); }
             setNotice(result->error);
         } else if (!hotkeyRegistered_) { setNotice(i18n::tr("notice.hotkey_taken")); }
+        if (previewMode_ && view_ == View::Compose) renderPreview();
     } catch (const std::exception& error) { setNotice(error.what()); }
 }
 void Window::login() {
@@ -1026,6 +1076,8 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         if (id == BrowserButton) browser();
         if (id == CloseButton) hide();
         if (id == ThemeButton) toggleTheme();
+        if (id == CodeTab) setPreview(false);
+        if (id == MarkdownPreviewTab) setPreview(true);
         if (id == TopmostButton) toggleTopmost();
         if (id == Visibility) chooseVisibility();
         if (id == LanguageInput) chooseLanguage();
@@ -1083,7 +1135,8 @@ LRESULT Window::message(UINT msg, WPARAM wparam, LPARAM lparam) {
         const auto colors = palette(config_.dark);
         const bool disabled = item->itemState & ODS_DISABLED;
         const bool pressed = item->itemState & ODS_SELECTED;
-        const bool primary = item->CtlID == SaveButton || item->CtlID == LoginButton || item->CtlID == SettingsSaveButton || item->CtlID == PanelConfirm || (item->CtlID == TopmostButton && config_.alwaysOnTop);
+        const bool primary = item->CtlID == SaveButton || item->CtlID == LoginButton || item->CtlID == SettingsSaveButton || item->CtlID == PanelConfirm || (item->CtlID == TopmostButton && config_.alwaysOnTop)
+            || (item->CtlID == CodeTab && !previewMode_) || (item->CtlID == MarkdownPreviewTab && previewMode_);
         const auto brush = CreateSolidBrush(primary ? (disabled ? colors.muted : colors.accent) : pressed ? colors.hover : colors.background);
         FillRect(dc, &item->rcItem, background_);
         const auto oldBrush = SelectObject(dc, brush); const auto oldPen = SelectObject(dc, GetStockObject(NULL_PEN));

@@ -1,5 +1,6 @@
 #include "storage.hpp"
 #include "markdown.hpp"
+#include "preview.hpp"
 #include "audio.hpp"
 #include "location.hpp"
 #include "geocoding.hpp"
@@ -47,6 +48,11 @@ void markdownTests() {
     check(link.replacement.substr(link.selectionStart, link.selectionEnd - link.selectionStart) == L"https://", "Link did not select URL placeholder");
     const auto empty = mq::formatMarkdown(L"", 0, 0, A::Bold);
     check(empty.replacement == L"**文字**" && empty.selectionStart == 2 && empty.selectionEnd == 4, "Empty bold did not select placeholder");
+    const auto preview = mq::previewRtf(L"# 标题\r\n**bold** and [link](https://example.com)\r\n- [x] done\r\n```\r\n{\\object}\r\n```", false);
+    check(preview.find("\\b\\fs40") != std::string::npos && preview.find("{\\b bold}") != std::string::npos, "Preview lost heading or bold formatting");
+    check(preview.find("\\u26631?") != std::string::npos && preview.find("[x] done") != std::string::npos, "Preview lost Unicode or task content");
+    check(preview.find("\\{\\\\object\\}") != std::string::npos && preview.find("https://example.com") == std::string::npos, "Preview did not escape code or hide link destination");
+    check(mq::previewRtf(std::wstring(50000, L'['), true).size() > 50000, "Preview lost unmatched delimiters");
 }
 void i18nTests() {
     mq::i18n::resetToDefaults();
