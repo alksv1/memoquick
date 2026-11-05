@@ -303,6 +303,16 @@ public:
             SetWindowPos(handle, nullptr, 0, 0, MulDiv(340, dpi, 96), MulDiv(416, dpi, 96),
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             verifyFocusFrame(handle, output_ / L"compose-dark-resized-inactive.bmp");
+            SetWindowPos(handle, nullptr, 0, 0, MulDiv(340, dpi, 96), MulDiv(240, dpi, 96),
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            RECT lastTool{}, codeTab{}, previewTab{}, editorBounds{}, saveBounds{};
+            GetWindowRect(GetDlgItem(handle, mq::MdCodeBlock), &lastTool);
+            GetWindowRect(GetDlgItem(handle, mq::CodeTab), &codeTab);
+            GetWindowRect(GetDlgItem(handle, mq::MarkdownPreviewTab), &previewTab);
+            GetWindowRect(GetDlgItem(handle, mq::Editor), &editorBounds);
+            GetWindowRect(GetDlgItem(handle, mq::SaveButton), &saveBounds);
+            require(lastTool.right <= codeTab.left && codeTab.right <= previewTab.left && editorBounds.bottom <= saveBounds.top,
+                "Compact toolbar or editor controls overlap");
             SetWindowPos(handle, nullptr, 0, 0, originalSize.right - originalSize.left, originalSize.bottom - originalSize.top,
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::SettingsButton, BN_CLICKED), 0);
