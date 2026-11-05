@@ -217,7 +217,7 @@ void unitTests() {
     std::filesystem::create_directories(directory);
     const mq::Draft draft{secret, "PRIVATE"};
     const std::vector<mq::Cookie> cookies{{"memos_refresh", "unique-refresh-value", "/", true, 0}};
-    mq::Config config; config.server = server.url; config.dark = true; config.geocodingEndpoint = "https://maps.example.com/reverse";
+    mq::Config config; config.server = server.url; config.dark = true; config.alwaysOnTop = true; config.geocodingEndpoint = "https://maps.example.com/reverse";
     {
         mq::Store store(directory);
         check(!store.windowPosition(), "New installation already has a window position");
@@ -280,6 +280,7 @@ void unitTests() {
     {
         mq::Store store(directory);
         check(!store.config().dark && store.config().server == server.url, "Legacy settings did not default to Light");
+        check(!store.config().alwaysOnTop, "Legacy settings unexpectedly enable always-on-top");
         auto disabled = store.config(); disabled.geocodingEndpoint.clear(); store.saveConfig(disabled);
     }
     {

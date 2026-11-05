@@ -179,6 +179,19 @@ public:
         SetTimer(window_.handle(), 777, 30, nullptr);
         UpdateWindow(window_.handle());
         screenshot(window_.handle(), output_ / L"login.bmp");
+        const auto handle = window_.handle();
+        RECT pinBounds{}; GetWindowRect(GetDlgItem(handle, mq::TopmostButton), &pinBounds);
+        require(SendMessageW(handle, WM_NCHITTEST, 0, MAKELPARAM((pinBounds.left + pinBounds.right) / 2, (pinBounds.top + pinBounds.bottom) / 2)) == HTCLIENT, "Always-on-top button is covered by the drag area");
+        const bool initiallyTopmost = (GetWindowLongPtrW(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        require(initiallyTopmost == store_.config().alwaysOnTop, "Initial always-on-top state does not match settings");
+        SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::TopmostButton, BN_CLICKED), 0);
+        require(((GetWindowLongPtrW(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) != initiallyTopmost, "Always-on-top did not toggle");
+        require(store_.config().alwaysOnTop != initiallyTopmost, "Always-on-top setting was not saved");
+        window_.hide(); window_.show();
+        require(((GetWindowLongPtrW(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) != initiallyTopmost, "Always-on-top was lost after hiding");
+        SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::TopmostButton, BN_CLICKED), 0);
+        require(((GetWindowLongPtrW(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) == initiallyTopmost, "Always-on-top did not toggle back");
+        require(store_.config().alwaysOnTop == initiallyTopmost, "Always-on-top setting did not toggle back");
         verifyMenu(window_, 0, false, false, output_ / L"tray-menu-light.bmp");
         MONITORINFO monitor{sizeof(monitor)};
         require(GetMonitorInfoW(MonitorFromWindow(window_.handle(), MONITOR_DEFAULTTONEAREST), &monitor) != FALSE, "Monitor lookup failed");
@@ -531,7 +544,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                 << ",\"workLeft\":" << monitor.rcWork.left << ",\"workTop\":" << monitor.rcWork.top
                 << ",\"workRight\":" << monitor.rcWork.right << ",\"workBottom\":" << monitor.rcWork.bottom
                 << ",\"language\":\"" << mq::i18n::currentLanguage() << "\""
-                << ",\"configuredLanguage\":\"" << mq::i18n::configuredLanguage() << "\"}";
+                << ",\"configuredLanguage\":\"" << mq::i18n::configuredLanguage() << "\""
+                << ",\"alwaysOnTop\":" << ((GetWindowLongPtrW(window.handle(), GWL_EXSTYLE) & WS_EX_TOPMOST) ? "true" : "false") << "}";
             require(report.good(), "Position report failed");
             DestroyWindow(window.handle());
         }
