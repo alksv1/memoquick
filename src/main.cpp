@@ -211,6 +211,24 @@ public:
         if (stage_ == 0) {
             require(window_.view() == mq::View::Compose, window_.notice().c_str());
             require(GetWindowTextLengthW(GetDlgItem(handle, mq::PasswordInput)) == 0, "Password was retained");
+            const auto lineEditor = GetDlgItem(handle, mq::Editor);
+            SetWindowTextW(lineEditor, L"alpha\r\nbeta");
+            const auto editorFirst = SendMessageW(lineEditor, EM_POSFROMCHAR, 0, 0);
+            const auto editorSecondIndex = SendMessageW(lineEditor, EM_LINEINDEX, 1, 0);
+            const auto editorSecond = SendMessageW(lineEditor, EM_POSFROMCHAR, static_cast<WPARAM>(editorSecondIndex), 0);
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::MarkdownPreviewTab, BN_CLICKED), 0);
+            const auto linePreview = GetDlgItem(handle, mq::MarkdownPreview);
+            POINTL previewFirst{}, previewSecond{};
+            const auto previewSecondIndex = SendMessageW(linePreview, EM_LINEINDEX, 1, 0);
+            SendMessageW(linePreview, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&previewFirst), 0);
+            SendMessageW(linePreview, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&previewSecond), previewSecondIndex);
+            const int editorLineHeight = static_cast<short>(HIWORD(editorSecond)) - static_cast<short>(HIWORD(editorFirst));
+            const int previewLineHeight = previewSecond.y - previewFirst.y;
+            if (editorLineHeight <= 0 || previewLineHeight <= 0 ||
+                std::abs(editorLineHeight - previewLineHeight) > MulDiv(2, static_cast<int>(GetDpiForWindow(handle)), 96))
+                throw std::runtime_error("Preview line spacing does not match the editor: " + std::to_string(editorLineHeight) + " / " + std::to_string(previewLineHeight));
+            SendMessageW(handle, WM_COMMAND, MAKEWPARAM(mq::CodeTab, BN_CLICKED), 0);
+            SetWindowTextW(lineEditor, L"");
             SendMessageW(GetDlgItem(handle, mq::Editor), EM_REPLACESEL, TRUE,
                 reinterpret_cast<LPARAM>(L"原生 C++ 快速记录 📝\r\n#测试\r\n- [ ] 整理灵感"));
             const auto original = window_.currentDraft();
@@ -222,7 +240,7 @@ public:
             require(GetWindowTextLengthW(preview) > 0 && !IsWindowEnabled(GetDlgItem(handle, mq::MdBold)), "Preview is empty or editing tools are enabled");
             std::wstring previewText(static_cast<size_t>(GetWindowTextLengthW(preview)) + 1, L'\0');
             GetWindowTextW(preview, previewText.data(), static_cast<int>(previewText.size()));
-            require(previewText.find(L"原生 C++ 快速记录 📝") != std::wstring::npos && previewText.find(L"[ ] 整理灵感") != std::wstring::npos, "Preview lost Unicode or task content");
+            require(previewText.find(L"原生 C++ 快速记录 📝") != std::wstring::npos && previewText.find(L"☐ 整理灵感") != std::wstring::npos, "Preview lost Unicode or task content");
             UpdateWindow(handle);
             screenshot(handle, output_ / L"preview.bmp");
             require(window_.currentDraft() == original, "Preview changed the draft");

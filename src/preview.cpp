@@ -139,7 +139,7 @@ std::string previewRtf(const std::wstring& markdown, bool dark) {
     std::string out = "{\\rtf1\\ansi\\deff0\\uc1{\\fonttbl{\\f0\\fswiss Segoe UI;}{\\f1\\fmodern Consolas;}}";
     out += dark ? "{\\colortbl;\\red230\\green230\\blue230;\\red116\\green180\\blue255;\\red55\\green55\\blue55;\\red165\\green165\\blue165;}"
                 : "{\\colortbl;\\red32\\green32\\blue32;\\red0\\green90\\blue180;\\red235\\green235\\blue235;\\red100\\green100\\blue100;}";
-    out += "\\viewkind4\\f0\\fs22\\cf1 ";
+    out += "\\viewkind4\\f0\\fs21\\cf1 ";
     std::vector<View> lines;
     View input(markdown);
     size_t start = 0;
@@ -160,7 +160,7 @@ std::string previewRtf(const std::wstring& markdown, bool dark) {
         }
         Fence opening = fence(line);
         if (opening.marker) { active = opening; continue; }
-        out += "{\\pard\\f0\\fs22\\cf1 ";
+        out += "{\\pard\\sb0\\sa0\\f0\\fs21\\cf1 ";
         if (rule(line)) { out += "\\brdrb\\brdrs\\brdrw10\\brdrcf4 \\par}\n"; continue; }
         size_t p = indent(line), quote = 0;
         while (p < line.size() && line[p] == L'>') {
@@ -182,6 +182,8 @@ std::string previewRtf(const std::wstring& markdown, bool dark) {
             }
             inlineText(out, line.substr(h, end - h)); out += "\\par}\n"; continue;
         }
+        // Match the native editor's compact line height for normal text and lists.
+        out += "\\sl-285\\slmult0 ";
         // Recognize list markers after arbitrary leading spaces, preserving indentation.
         size_t list = p;
         while (list < line.size() && space(line[list])) ++list;
@@ -197,15 +199,17 @@ std::string previewRtf(const std::wstring& markdown, bool dark) {
         if (unordered || ordered) {
             const size_t nesting = list - p + (quote ? 0 : p);
             out += "\\li" + std::to_string((nesting > 30 ? 30 : nesting) * 120 + 360) + "\\fi-240 ";
-            if (unordered) out += "\\u8226? ";
-            else { text(out, line.substr(list, content - list - 1)); out += ' '; }
+            const size_t markerEnd = content;
             while (content < line.size() && space(line[content])) ++content;
-            if (content + 2 < line.size() && line[content] == L'[' && line[content + 2] == L']' &&
+            const bool task = content + 2 < line.size() && line[content] == L'[' && line[content + 2] == L']' &&
                 (line[content + 1] == L' ' || line[content + 1] == L'x' || line[content + 1] == L'X') &&
-                (content + 3 == line.size() || space(line[content + 3]))) {
-                out += line[content + 1] == L' ' ? "[ ] " : "[x] "; content += 3;
+                (content + 3 == line.size() || space(line[content + 3]));
+            if (task) {
+                character(out, line[content + 1] == L' ' ? L'☐' : L'☑'); out += ' ';
+                content += 3;
                 while (content < line.size() && space(line[content])) ++content;
-            }
+            } else if (unordered) out += "\\u8226? ";
+            else { text(out, line.substr(list, markerEnd - list - 1)); out += ' '; }
             inlineText(out, line.substr(content));
         } else inlineText(out, line.substr(p));
         out += "\\par}\n";
