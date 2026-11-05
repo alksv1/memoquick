@@ -2,7 +2,7 @@
 
 English | [简体中文](README_zh.md)
 
-A standalone quick-capture tool for Memos, current version **0.2.6**. Native C++20 + Win32 window connecting directly to an existing Memos instance.
+A standalone quick-capture tool for Memos, current version **0.3.0**. Native C++20 + Win32 window connecting directly to an existing Memos instance.
 No dependencies on Memospot, Electron, WebView, Node.js, Python, or .NET runtimes.
 
 ## Usage
@@ -29,7 +29,7 @@ Default visibility for new memos is "Only Me", with options for signed-in users 
 
 ## Markdown Tools
 
-Use **Code / Preview** above the editor to switch between Markdown source and a read-only formatted preview. Switching preserves the draft and editor selection. The native preview supports common headings, emphasis, lists, quotes, links and code; it does not load images or open links, and complex Markdown may display as source.
+Use **Code / Preview** above the editor to switch between Markdown source and a read-only formatted preview. Switching preserves the draft and editor selection. The native preview uses MD4C and supports common headings, emphasis, task lists, quotes, links, tables, horizontal rules and code blocks with language labels. It does not load images or open links; some advanced formatting is not supported.
 
 The toolbar above the text area supports selection formatting; when no text is selected, it inserts placeholder text. List, heading, and quote tools apply to the current line or full selected lines.
 Bold, italic, and line prefixes can be clicked again to cancel. Lists can be converted directly into other list types, and formatting operations can be undone with **Ctrl + Z**.
